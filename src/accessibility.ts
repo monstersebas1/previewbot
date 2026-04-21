@@ -1,7 +1,8 @@
 import puppeteer from "puppeteer";
 import { AxePuppeteer } from "@axe-core/puppeteer";
-import type { AxeResult, AxeViolation } from "./audit-types.js";
+import type { AxeImpact, AxeResult, AxeViolation } from "./audit-types.js";
 import { assertSafeUrl } from "./url-validation.js";
+import { config } from "./config.js";
 
 const IMPACT_ORDER: Record<string, number> = {
   critical: 0,
@@ -28,11 +29,17 @@ async function scanPage(
       timeout: PAGE_TIMEOUT_MS,
     });
 
-    const results = await new AxePuppeteer(page).analyze();
+    const results = await Promise.race([
+      new AxePuppeteer(page).analyze(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("axe-core analysis timed out")), 30_000),
+      ),
+    ]);
 
+    const VALID_IMPACTS = new Set<AxeImpact>(["critical", "serious", "moderate", "minor"]);
     const violations: AxeViolation[] = results.violations.map((v) => ({
       id: v.id,
-      impact: v.impact ?? "minor",
+      impact: VALID_IMPACTS.has(v.impact as AxeImpact) ? (v.impact as AxeImpact) : "minor",
       description: v.description,
       nodes: v.nodes.length,
     }));
@@ -101,9 +108,13 @@ export async function runAccessibilityAudit(
 ): Promise<AxeResult> {
   assertSafeUrl(url);
 
+  const puppeteerArgs: string[] = [];
+  if (config.disableChromeSandbox) {
+    puppeteerArgs.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: puppeteerArgs,
   });
 
   try {

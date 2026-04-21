@@ -16,8 +16,8 @@ export async function waitForHealthy(prNumber: number): Promise<"healthy" | "unh
       });
 
       if (response.ok) {
-        const body = await response.text();
-        if (body.length > 0) {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("text/html") || contentType.includes("application/json")) {
           return "healthy";
         }
       }

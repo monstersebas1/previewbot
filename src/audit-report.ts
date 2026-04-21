@@ -1,7 +1,8 @@
 import type { AuditReport, LighthouseResult, AxeResult, PathAuditResult, VisualDiffResult } from "./audit-types.js";
 import { sanitizeMarkdown } from "./sanitize-markdown.js";
 
-function scoreBadge(score: number): string {
+function scoreBadge(score: number | null): string {
+  if (score === null) return "N/A";
   if (score >= 90) return `🟢 ${score}`;
   if (score >= 50) return `🟡 ${score}`;
   return `🔴 ${score}`;

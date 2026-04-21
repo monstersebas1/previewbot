@@ -9,6 +9,13 @@ vi.mock("../src/url-validation.js", () => ({
   assertSafeUrl: vi.fn(),
 }));
 
+vi.mock("../src/config.js", () => ({
+  config: {
+    disableChromeSandbox: false,
+    reportDir: "/tmp/reports",
+  },
+}));
+
 const fakeLhr = {
   categories: {
     performance: { score: 0.92 },

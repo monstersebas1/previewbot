@@ -1,8 +1,8 @@
 export interface LighthouseScores {
-  performance: number;
-  accessibility: number;
-  bestPractices: number;
-  seo: number;
+  performance: number | null;
+  accessibility: number | null;
+  bestPractices: number | null;
+  seo: number | null;
 }
 
 export interface PerformanceDiff {
@@ -18,9 +18,11 @@ export interface LighthouseResult {
   rawReportUrl?: string;
 }
 
+export type AxeImpact = "critical" | "serious" | "moderate" | "minor";
+
 export interface AxeViolation {
   id: string;
-  impact: string;
+  impact: AxeImpact;
   description: string;
   nodes: number;
 }

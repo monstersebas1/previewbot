@@ -32,7 +32,8 @@ async function checkDiskSpace(): Promise<boolean> {
     const { stdout } = await execAsync("df -BG --output=avail / | tail -1");
     const availGB = parseInt(stdout.trim().replace("G", ""), 10);
     return availGB >= 2;
-  } catch {
+  } catch (err) {
+    console.warn("[Builder] Disk space check failed:", err);
     return true;
   }
 }
@@ -153,7 +154,22 @@ export async function buildPreview(ctx: BuildContext): Promise<BuildResult> {
 export async function destroyPreview(prNumber: number): Promise<void> {
   const name = containerName(prNumber);
 
-  await execAsync(`docker rm -f ${name} 2>/dev/null || true`);
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "inspect",
+      "--format",
+      "{{index .Config.Labels \"preview.pr\"}}",
+      name,
+    ]);
+    if (!stdout.trim()) {
+      console.warn(`[Builder] Skipping destroy: container ${name} is not a previewbot container`);
+      return;
+    }
+  } catch {
+    // Container does not exist — nothing to remove
+  }
+
+  await execFileAsync("docker", ["rm", "-f", name]).catch(() => undefined);
   await execAsync(`docker rmi previewbot-app:pr-${prNumber} 2>/dev/null || true`);
   await rm(deployPath(prNumber), { recursive: true, force: true });
   await rm(secretsPath(prNumber), { recursive: true, force: true });

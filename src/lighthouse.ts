@@ -4,6 +4,7 @@ import lighthouse, { type Result, type RunnerResult } from "lighthouse";
 import { launch } from "chrome-launcher";
 import type { LighthouseResult, PerformanceDiff } from "./audit-types.js";
 import { assertSafeUrl } from "./url-validation.js";
+import { config } from "./config.js";
 
 interface LighthouseRun {
   lhr: Result;
@@ -11,7 +12,6 @@ interface LighthouseRun {
 }
 
 const TIMEOUT_MS = 120_000;
-const REPORT_BASE_DIR = "/var/previewbot/reports";
 
 const DIFF_METRICS: { key: string; label: string }[] = [
   { key: "first-contentful-paint", label: "FCP" },
@@ -21,8 +21,8 @@ const DIFF_METRICS: { key: string; label: string }[] = [
   { key: "speed-index", label: "SI" },
 ];
 
-function scoreToInt(score: number | null): number {
-  return Math.round((score ?? 0) * 100);
+function scoreToInt(score: number | null): number | null {
+  return score === null ? null : Math.round(score * 100);
 }
 
 function extractScores(result: Result): LighthouseResult["scores"] {
@@ -53,7 +53,11 @@ function computeDiff(preview: Result, production: Result): PerformanceDiff[] {
 }
 
 async function runOnce(url: string): Promise<LighthouseRun> {
-  const chrome = await launch({ chromeFlags: ["--headless", "--no-sandbox", "--disable-gpu"] });
+  const chromeFlags = ["--headless", "--disable-gpu"];
+  if (config.disableChromeSandbox) {
+    chromeFlags.push("--no-sandbox");
+  }
+  const chrome = await launch({ chromeFlags });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -94,7 +98,10 @@ async function runOnce(url: string): Promise<LighthouseRun> {
 }
 
 async function saveReport(html: string, prNumber: number): Promise<string> {
-  const dir = join(REPORT_BASE_DIR, `pr-${prNumber}`);
+  if (!Number.isInteger(prNumber) || prNumber < 1) {
+    throw new Error(`Invalid PR number for report: ${prNumber}`);
+  }
+  const dir = join(config.reportDir, `pr-${prNumber}`);
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, "lighthouse.html");
   await writeFile(filePath, html, "utf-8");
@@ -113,13 +120,15 @@ export async function runLighthouse({ url, productionUrl, prNumber }: RunLightho
     assertSafeUrl(productionUrl);
   }
 
-  const preview = await runOnce(url);
-  const scores = extractScores(preview.lhr);
+  const [preview, production] = await Promise.all([
+    runOnce(url),
+    productionUrl ? runOnce(productionUrl) : Promise.resolve(undefined),
+  ]);
 
+  const scores = extractScores(preview.lhr);
   const result: LighthouseResult = { scores };
 
-  if (productionUrl) {
-    const production = await runOnce(productionUrl);
+  if (production) {
     result.performanceDiff = computeDiff(preview.lhr, production.lhr);
   }
 

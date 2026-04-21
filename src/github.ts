@@ -31,15 +31,19 @@ interface CommentOptions {
 }
 
 async function findBotComment({ owner, repo, prNumber }: CommentOptions): Promise<number | null> {
-  const { data: comments } = await octokit.rest.issues.listComments({
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100,
-  });
+  for (let page = 1; ; page++) {
+    const { data } = await octokit.rest.issues.listComments({
+      owner,
+      repo,
+      issue_number: prNumber,
+      per_page: 100,
+      page,
+    });
 
-  const existing = comments.find((c) => c.body?.includes(MARKER));
-  return existing?.id ?? null;
+    const found = data.find((c) => c.body?.includes(MARKER));
+    if (found) return found.id;
+    if (data.length < 100) return null;
+  }
 }
 
 async function upsertComment({ owner, repo, prNumber }: CommentOptions, body: string): Promise<void> {
@@ -120,7 +124,7 @@ export async function commentFailed(
     "<details><summary>Error Log</summary>",
     "",
     "```",
-    errorLog.slice(-2000),
+    errorLog.slice(-2000).replace(/`{3,}/g, "` ` `"),
     "```",
     "",
     "</details>",

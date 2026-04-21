@@ -280,17 +280,19 @@ app.get("/previews", async (_req, res) => {
   }
 });
 
-// Cleanup cron: run every 6 hours
-setInterval(async () => {
-  console.log("[Cleanup] Running stale preview cleanup...");
-  try {
-    const cleaned = await cleanupStalePreviews();
-    if (cleaned.length > 0) {
-      console.log(`[Cleanup] Removed: ${cleaned.join(", ")}`);
+// Cleanup cron: run every 6 hours — routed through buildQueue to prevent concurrent nginx writes
+setInterval(() => {
+  buildQueue.add(async () => {
+    console.log("[Cleanup] Running stale preview cleanup...");
+    try {
+      const cleaned = await cleanupStalePreviews();
+      if (cleaned.length > 0) {
+        console.log(`[Cleanup] Removed: ${cleaned.join(", ")}`);
+      }
+    } catch (err) {
+      console.error("[Cleanup] Error:", err);
     }
-  } catch (err) {
-    console.error("[Cleanup] Error:", err);
-  }
+  });
 }, 6 * 60 * 60 * 1000);
 
 app.listen(config.port, () => {

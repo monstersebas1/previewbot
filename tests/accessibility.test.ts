@@ -24,6 +24,12 @@ vi.mock("../src/url-validation.js", () => ({
   assertSafeUrl: vi.fn(),
 }));
 
+vi.mock("../src/config.js", () => ({
+  config: {
+    disableChromeSandbox: false,
+  },
+}));
+
 const axeResponse = {
   violations: [
     {

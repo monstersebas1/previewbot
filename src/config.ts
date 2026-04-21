@@ -44,7 +44,9 @@ export const config = {
   thresholdAxeSerious: parseInt(optional("THRESHOLD_AXE_SERIOUS", "5"), 10),
   thresholdVisualCritical: parseInt(optional("THRESHOLD_VISUAL_CRITICAL", "0"), 10),
   visualDiffModel: optional("VISUAL_DIFF_MODEL", "claude-sonnet-4-5-20250929"),
-} as const;
+  disableChromeSandbox: optional("DISABLE_CHROME_SANDBOX", "true") === "true",
+  reportDir: optional("REPORT_DIR", "/var/previewbot/reports"),
+};
 
 export function previewPort(prNumber: number): number {
   const port = 4000 + prNumber;
