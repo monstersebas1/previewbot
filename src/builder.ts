@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, rm, writeFile, stat } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { config, previewPort, containerName } from "./config.js";
 
@@ -42,8 +42,9 @@ async function cloneRepo(ctx: BuildContext): Promise<void> {
   await rm(dir, { recursive: true, force: true });
   await ensureDir(dir);
 
-  await execAsync(
-    `git clone --depth 1 --branch ${ctx.branch} ${ctx.cloneUrl} ${dir}`,
+  await execFileAsync(
+    "git",
+    ["clone", "--depth", "1", "--branch", ctx.branch, ctx.cloneUrl, dir],
     { timeout: 120_000 },
   );
 }
@@ -55,11 +56,11 @@ async function dockerBuild(ctx: BuildContext): Promise<void> {
   const dockerfileSrc = path.join(dir, "Dockerfile");
   const dockerfileExists = await stat(dockerfileSrc).then(() => true).catch(() => false);
 
-  const buildCmd = dockerfileExists
-    ? `docker build -t ${imageName} ${dir}`
-    : `docker build -t ${imageName} -f /opt/previewbot/templates/Dockerfile.preview ${dir}`;
+  const buildArgs = dockerfileExists
+    ? ["build", "-t", imageName, dir]
+    : ["build", "-t", imageName, "-f", "/opt/previewbot/templates/Dockerfile.preview", dir];
 
-  await execAsync(buildCmd, {
+  await execFileAsync("docker", buildArgs, {
     timeout: config.buildTimeout * 1000,
     env: { ...process.env, DOCKER_BUILDKIT: "1" },
   });
@@ -73,7 +74,7 @@ async function setupSecrets(prNumber: number): Promise<void> {
   const envExists = await stat(previewEnvPath).then(() => true).catch(() => false);
 
   if (envExists) {
-    await execAsync(`cp ${previewEnvPath} ${dir}/.env`);
+    await copyFile(previewEnvPath, path.join(dir, ".env"));
   }
 }
 

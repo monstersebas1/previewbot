@@ -42,8 +42,10 @@ async function scanPage(
       incomplete: results.incomplete.length,
       totalViolations: violations.reduce((sum, v) => sum + v.nodes, 0),
     };
-  } catch {
-    return emptyResult();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[axe] scan failed for ${pageUrl}: ${message}`);
+    return { ...emptyResult(), scanError: message };
   } finally {
     await page.close();
   }
@@ -53,10 +55,15 @@ function aggregateResults(results: AxeResult[]): AxeResult {
   const violationMap = new Map<string, AxeViolation>();
   let totalPasses = 0;
   let totalIncomplete = 0;
+  const errors: string[] = [];
 
   for (const result of results) {
     totalPasses += result.passes;
     totalIncomplete += result.incomplete;
+
+    if (result.scanError) {
+      errors.push(result.scanError);
+    }
 
     for (const v of result.violations) {
       const existing = violationMap.get(v.id);
@@ -73,12 +80,18 @@ function aggregateResults(results: AxeResult[]): AxeResult {
       (IMPACT_ORDER[a.impact] ?? 4) - (IMPACT_ORDER[b.impact] ?? 4),
   );
 
-  return {
+  const aggregated: AxeResult = {
     violations,
     passes: totalPasses,
     incomplete: totalIncomplete,
     totalViolations: violations.reduce((sum, v) => sum + v.nodes, 0),
   };
+
+  if (errors.length > 0) {
+    aggregated.scanError = errors.join("; ");
+  }
+
+  return aggregated;
 }
 
 export async function runAccessibilityAudit(

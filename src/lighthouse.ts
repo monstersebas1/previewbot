@@ -54,6 +54,8 @@ function computeDiff(preview: Result, production: Result): PerformanceDiff[] {
 async function runOnce(url: string): Promise<LighthouseRun> {
   const chrome = await launch({ chromeFlags: ["--headless", "--no-sandbox", "--disable-gpu"] });
 
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const runnerResult = await Promise.race([
       lighthouse(url, {
@@ -62,10 +64,15 @@ async function runOnce(url: string): Promise<LighthouseRun> {
         logLevel: "error",
         onlyCategories: ["performance", "accessibility", "best-practices", "seo"],
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Lighthouse timed out after ${TIMEOUT_MS}ms`)), TIMEOUT_MS),
-      ),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Lighthouse timed out after ${TIMEOUT_MS}ms`)),
+          TIMEOUT_MS,
+        );
+      }),
     ]);
+
+    clearTimeout(timeoutId);
 
     if (!runnerResult?.lhr) {
       throw new Error("Lighthouse returned no results");
@@ -74,7 +81,14 @@ async function runOnce(url: string): Promise<LighthouseRun> {
     const reportHtml = typeof runnerResult.report === "string" ? runnerResult.report : undefined;
     return { lhr: runnerResult.lhr, reportHtml };
   } finally {
-    await chrome.kill();
+    try {
+      await Promise.race([
+        chrome.kill(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    } catch {
+      // Chrome process may already be dead
+    }
   }
 }
 

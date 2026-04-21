@@ -30,6 +30,7 @@ export interface AxeResult {
   passes: number;
   incomplete: number;
   totalViolations: number;
+  scanError?: string;
 }
 
 export interface ViewportScreenshot {

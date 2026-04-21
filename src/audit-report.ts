@@ -59,8 +59,17 @@ function renderLighthouse(lighthouse: LighthouseResult): string {
 function renderAxe(axe: AxeResult): string {
   const lines: string[] = ["### Accessibility (axe-core)", ""];
 
-  if (axe.violations.length === 0) {
+  if (axe.scanError) {
+    lines.push(`> :warning: Accessibility scan failed: ${axe.scanError}`);
+    lines.push("");
+  }
+
+  if (axe.violations.length === 0 && !axe.scanError) {
     lines.push("✅ No violations found");
+    return lines.join("\n");
+  }
+
+  if (axe.violations.length === 0) {
     return lines.join("\n");
   }
 
