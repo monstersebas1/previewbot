@@ -1,40 +1,53 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: previewbot add owner/repo
-# Creates a webhook on the GitHub repo pointing to this server
+# ---------------------------------------------------------------------------
+# PreviewBot — Add a GitHub repository webhook
+# Usage: bash scripts/add-repo.sh owner/repo
+# ---------------------------------------------------------------------------
 
-if [ -z "${1:-}" ]; then
-  echo "Usage: previewbot add <owner/repo>"
-  echo "Example: previewbot add weautomatehq/phillup"
+if [[ -z "${1:-}" ]]; then
+  echo "Usage: bash scripts/add-repo.sh <owner/repo>"
+  echo "Example: bash scripts/add-repo.sh weautomatehq/myapp"
   exit 1
 fi
 
-REPO="$1"
-OWNER=$(echo "$REPO" | cut -d'/' -f1)
-REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+REPO="${1}"
 
 # Load config
-if [ -f /opt/previewbot/.env ]; then
-  source /opt/previewbot/.env
-elif [ -f .env ]; then
-  source .env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(dirname "${SCRIPT_DIR}")"
+
+if [[ -f "${APP_DIR}/.env" ]]; then
+  set -a
+  source "${APP_DIR}/.env"
+  set +a
+elif [[ -f "/opt/previewbot/app/.env" ]]; then
+  set -a
+  source "/opt/previewbot/app/.env"
+  set +a
 else
-  echo "Error: No .env found"
+  echo "ERROR: No .env found at ${APP_DIR}/.env or /opt/previewbot/app/.env" >&2
   exit 1
 fi
 
-# Detect public URL
-SERVER_IP=$(curl -s ifconfig.me)
-WEBHOOK_URL="http://${SERVER_IP}:3500/webhook"
+for var in GITHUB_TOKEN GITHUB_WEBHOOK_SECRET PREVIEW_DOMAIN; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "ERROR: Required env var ${var} is not set in .env" >&2
+    exit 1
+  fi
+done
+
+WEBHOOK_URL="https://previewbot.${PREVIEW_DOMAIN}/webhook"
 
 echo "Creating webhook for ${REPO}..."
 echo "  Webhook URL: ${WEBHOOK_URL}"
 
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
   "https://api.github.com/repos/${REPO}/hooks" \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
+  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
   -d "{
     \"name\": \"web\",
     \"active\": true,
@@ -47,11 +60,11 @@ RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     }
   }")
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | head -n -1)
+HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
+BODY=$(echo "${RESPONSE}" | head -n -1)
 
-if [ "$HTTP_CODE" = "201" ]; then
-  HOOK_ID=$(echo "$BODY" | grep -o '"id": [0-9]*' | head -1 | grep -o '[0-9]*')
+if [[ "${HTTP_CODE}" == "201" ]]; then
+  HOOK_ID=$(echo "${BODY}" | grep -o '"id": [0-9]*' | head -1 | grep -o '[0-9]*')
   echo ""
   echo "Webhook created successfully! (ID: ${HOOK_ID})"
   echo ""
@@ -60,7 +73,7 @@ if [ "$HTTP_CODE" = "201" ]; then
   echo "  2. Deploy it to pr-{number}.${PREVIEW_DOMAIN}"
   echo "  3. Comment on the PR with the live URL"
 else
-  echo "Error creating webhook (HTTP ${HTTP_CODE}):"
-  echo "$BODY" | head -20
+  echo "ERROR: Failed to create webhook (HTTP ${HTTP_CODE}):" >&2
+  echo "${BODY}" | head -20 >&2
   exit 1
 fi

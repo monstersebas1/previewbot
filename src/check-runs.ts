@@ -60,18 +60,22 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
   if (lighthouseResults.length > 0) {
     hasData = true;
     // Use worst scores across all paths
+    const minScore = (scores: (number | null)[]) => {
+      const valid = scores.filter((s): s is number => s !== null);
+      return valid.length > 0 ? Math.min(...valid) : null;
+    };
     const worstScores = {
-      performance: Math.min(...lighthouseResults.map((l) => l.scores.performance)),
-      accessibility: Math.min(...lighthouseResults.map((l) => l.scores.accessibility)),
-      bestPractices: Math.min(...lighthouseResults.map((l) => l.scores.bestPractices)),
-      seo: Math.min(...lighthouseResults.map((l) => l.scores.seo)),
+      performance: minScore(lighthouseResults.map((l) => l.scores.performance)),
+      accessibility: minScore(lighthouseResults.map((l) => l.scores.accessibility)),
+      bestPractices: minScore(lighthouseResults.map((l) => l.scores.bestPractices)),
+      seo: minScore(lighthouseResults.map((l) => l.scores.seo)),
     };
 
     summaryLines.push("## Lighthouse Scores");
-    summaryLines.push(`- Performance: ${worstScores.performance}`);
-    summaryLines.push(`- Accessibility: ${worstScores.accessibility}`);
-    summaryLines.push(`- Best Practices: ${worstScores.bestPractices}`);
-    summaryLines.push(`- SEO: ${worstScores.seo}`);
+    summaryLines.push(`- Performance: ${worstScores.performance ?? "N/A"}`);
+    summaryLines.push(`- Accessibility: ${worstScores.accessibility ?? "N/A"}`);
+    summaryLines.push(`- Best Practices: ${worstScores.bestPractices ?? "N/A"}`);
+    summaryLines.push(`- SEO: ${worstScores.seo ?? "N/A"}`);
     summaryLines.push("");
 
     const checks: { key: keyof typeof worstScores; label: string; threshold: number }[] = [
@@ -82,10 +86,11 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
     ];
 
     for (const { key, label, threshold } of checks) {
-      if (threshold > 0 && worstScores[key] < threshold) {
-        failures.push(`${label}: ${worstScores[key]} (min: ${threshold})`);
+      const score = worstScores[key];
+      if (score !== null && threshold > 0 && score < threshold) {
+        failures.push(`${label}: ${score} (min: ${threshold})`);
         annotations.push(
-          makeAnnotation("failure", `${label} below threshold`, `Score ${worstScores[key]} is below minimum ${threshold}`),
+          makeAnnotation("failure", `${label} below threshold`, `Score ${score} is below minimum ${threshold}`),
         );
       }
     }
@@ -185,11 +190,15 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
 
   const scoreParts: string[] = [];
   if (lighthouseResults.length > 0) {
-    const worst = {
-      performance: Math.min(...lighthouseResults.map((l) => l.scores.performance)),
-      accessibility: Math.min(...lighthouseResults.map((l) => l.scores.accessibility)),
+    const minValid = (vals: (number | null)[]) => {
+      const nums = vals.filter((v): v is number => v !== null);
+      return nums.length > 0 ? Math.min(...nums) : null;
     };
-    scoreParts.push(`Perf: ${worst.performance}, A11y: ${worst.accessibility}`);
+    const worst = {
+      performance: minValid(lighthouseResults.map((l) => l.scores.performance)),
+      accessibility: minValid(lighthouseResults.map((l) => l.scores.accessibility)),
+    };
+    scoreParts.push(`Perf: ${worst.performance ?? "N/A"}, A11y: ${worst.accessibility ?? "N/A"}`);
   }
   if (axeResults.length > 0) {
     const totalViolations = axeResults.flatMap((a) => a.violations).length;

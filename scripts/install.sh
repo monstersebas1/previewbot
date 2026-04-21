@@ -1,139 +1,156 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# PreviewBot — idempotent install script
+# Usage: sudo bash scripts/install.sh
+# No hardcoded domains or IPs — all config lives in .env
+# ---------------------------------------------------------------------------
+
+APP_DIR="/opt/previewbot/app"
+
+# ── 1. Root check ────────────────────────────────────────────────────────────
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "ERROR: This script must be run as root. Try: sudo bash scripts/install.sh" >&2
+  exit 1
+fi
 
 echo "========================================="
 echo "  PreviewBot Installer"
 echo "========================================="
 echo ""
 
-# Check root
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root: sudo bash install.sh"
+# ── 2. Directory structure ───────────────────────────────────────────────────
+echo "==> Creating directory structure"
+
+install -d -m 755 "${APP_DIR}"
+install -d -m 755 "/var/previewbot/deploys"
+install -d -m 700 "/var/previewbot/secrets"
+install -d -m 755 "/var/previewbot/reports"
+install -d -m 755 "/var/log/previewbot"
+
+echo "    ${APP_DIR}              OK"
+echo "    /var/previewbot/deploys        OK"
+echo "    /var/previewbot/secrets  (700) OK"
+echo "    /var/previewbot/reports        OK"
+echo "    /var/log/previewbot/           OK"
+
+# ── 3. Node.js 20 ────────────────────────────────────────────────────────────
+echo "==> Checking Node.js version"
+
+NODE_MAJOR=""
+if command -v node &>/dev/null; then
+  NODE_MAJOR="$(node --version | sed 's/v\([0-9]*\).*/\1/')"
+fi
+
+if [[ "${NODE_MAJOR}" != "20" ]]; then
+  echo "    Node.js v20 not found (found: ${NODE_MAJOR:-none}). Installing via NodeSource..."
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+  echo "    Node.js $(node --version) installed"
+else
+  echo "    Node.js $(node --version) already present — skipping"
+fi
+
+# ── 4. Docker ────────────────────────────────────────────────────────────────
+echo "==> Checking Docker"
+
+if ! command -v docker &>/dev/null; then
+  echo "    Docker not found. Installing via official script..."
+  curl -fsSL https://get.docker.com | sh
+  systemctl enable --now docker
+  echo "    Docker $(docker --version) installed"
+else
+  echo "    Docker already present — skipping"
+fi
+
+# ── 5. Docker network ────────────────────────────────────────────────────────
+echo "==> Ensuring Docker network 'pr-previews' exists"
+docker network create pr-previews 2>/dev/null || true
+echo "    Network 'pr-previews' OK"
+
+# ── 6. Repo check ────────────────────────────────────────────────────────────
+if [[ ! -f "${APP_DIR}/package.json" ]]; then
+  echo "" >&2
+  echo "WARNING: No package.json found at ${APP_DIR}." >&2
+  echo "         Clone the PreviewBot repository there first, then re-run this script." >&2
+  echo "         Example: git clone <your-repo-url> ${APP_DIR}" >&2
+  echo "" >&2
   exit 1
 fi
 
-# Prompt for configuration
-read -rp "Preview domain (e.g. preview.yourdomain.com): " PREVIEW_DOMAIN
-read -rp "GitHub Personal Access Token: " GITHUB_TOKEN
-WEBHOOK_SECRET=$(openssl rand -hex 32)
-echo "Generated webhook secret: $WEBHOOK_SECRET"
-
-# Install Docker if missing
-if ! command -v docker &> /dev/null; then
-  echo "[1/7] Installing Docker..."
-  curl -fsSL https://get.docker.com | sh
-  systemctl enable docker
-  systemctl start docker
-else
-  echo "[1/7] Docker already installed"
-fi
-
-# Install Node.js 20 if missing
-if ! command -v node &> /dev/null; then
-  echo "[2/7] Installing Node.js 20..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-  apt-get install -y nodejs
-else
-  echo "[2/7] Node.js already installed ($(node -v))"
-fi
-
-# Install PM2 if missing
-if ! command -v pm2 &> /dev/null; then
-  echo "[3/7] Installing PM2..."
-  npm install -g pm2
-else
-  echo "[3/7] PM2 already installed"
-fi
-
-# Create directories
-echo "[4/7] Creating directories..."
-mkdir -p /opt/previewbot
-mkdir -p /var/previewbot/deploys
-mkdir -p /var/previewbot/secrets
-
-# Create isolated Docker network
-echo "[5/7] Setting up Docker network..."
-docker network create \
-  --driver bridge \
-  --subnet=172.20.0.0/16 \
-  --opt com.docker.network.bridge.enable_icc=false \
-  pr-previews 2>/dev/null || echo "  Network already exists"
-
-# Block preview containers from accessing host services
-iptables -C DOCKER-USER -s 172.20.0.0/16 -d 172.17.0.0/16 -j DROP 2>/dev/null || \
-  iptables -I DOCKER-USER -s 172.20.0.0/16 -d 172.17.0.0/16 -j DROP
-iptables -C DOCKER-USER -s 172.20.0.0/16 -d 10.0.0.0/8 -j DROP 2>/dev/null || \
-  iptables -I DOCKER-USER -s 172.20.0.0/16 -d 10.0.0.0/8 -j DROP
-iptables -C DOCKER-USER -s 172.20.0.0/16 -d 192.168.0.0/16 -j DROP 2>/dev/null || \
-  iptables -I DOCKER-USER -s 172.20.0.0/16 -d 192.168.0.0/16 -j DROP
-
-# Save iptables rules
-if command -v netfilter-persistent &> /dev/null; then
-  netfilter-persistent save
-else
-  apt-get install -y iptables-persistent
-  netfilter-persistent save
-fi
-
-# Clone and install PreviewBot
-echo "[6/7] Installing PreviewBot..."
-cd /opt/previewbot
-if [ -d ".git" ]; then
-  git pull origin main
-else
-  git clone https://github.com/monstersebas1/previewbot.git .
-fi
-npm install
+# ── 7. npm install + build ───────────────────────────────────────────────────
+echo "==> Installing dependencies and building"
+cd "${APP_DIR}"
+npm ci --omit=dev
 npm run build
+echo "    Build complete"
 
-# Create .env
-cat > /opt/previewbot/.env << EOF
-GITHUB_TOKEN=${GITHUB_TOKEN}
-GITHUB_WEBHOOK_SECRET=${WEBHOOK_SECRET}
-PREVIEW_DOMAIN=${PREVIEW_DOMAIN}
-PORT=3500
-DEPLOY_DIR=/var/previewbot/deploys
-SECRETS_DIR=/var/previewbot/secrets
-NGINX_CONF_DIR=/etc/nginx/conf.d
-DOCKER_NETWORK=pr-previews
-CONTAINER_MEMORY=512m
-CONTAINER_CPUS=1
-BUILD_TIMEOUT=600
-HEALTH_CHECK_TIMEOUT=60
-EOF
+# ── 8. .env setup ────────────────────────────────────────────────────────────
+echo "==> Checking .env"
 
-chmod 600 /opt/previewbot/.env
-
-# Copy default Dockerfile template
-cp /opt/previewbot/templates/Dockerfile.preview /opt/previewbot/templates/Dockerfile.preview
-
-# Set up nginx include
-if ! grep -q "preview-pr-" /etc/nginx/nginx.conf 2>/dev/null; then
-  echo "  Nginx will auto-discover configs in ${NGINX_CONF_DIR}/preview-pr-*.conf"
+if [[ ! -f "${APP_DIR}/.env" ]]; then
+  if [[ -f "${APP_DIR}/.env.example" ]]; then
+    cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+    chmod 600 "${APP_DIR}/.env"
+    echo "" >&2
+    echo "WARNING: .env was not found. Copied .env.example to .env." >&2
+    echo "         IMPORTANT: Edit ${APP_DIR}/.env and fill in all required values before starting." >&2
+    echo "" >&2
+  else
+    echo "WARNING: Neither .env nor .env.example found at ${APP_DIR}. Create .env before starting." >&2
+  fi
+else
+  echo "    .env already exists — skipping"
 fi
 
-# Start with PM2
-echo "[7/7] Starting PreviewBot..."
-pm2 delete previewbot 2>/dev/null || true
-pm2 start /opt/previewbot/dist/server.js --name previewbot
+# ── 9. PM2 ───────────────────────────────────────────────────────────────────
+echo "==> Checking PM2"
+
+if ! command -v pm2 &>/dev/null; then
+  echo "    PM2 not found. Installing globally..."
+  npm install -g pm2
+  echo "    PM2 $(pm2 --version) installed"
+else
+  echo "    PM2 already present — skipping"
+fi
+
+# ── 10. Start with PM2 ───────────────────────────────────────────────────────
+echo "==> Starting PreviewBot with PM2"
+cd "${APP_DIR}"
+pm2 start ecosystem.config.cjs --env production
+echo "    PM2 process started"
+
+# ── 11. PM2 save + startup ───────────────────────────────────────────────────
+echo "==> Configuring PM2 auto-start on reboot"
 pm2 save
 pm2 startup
+echo "    PM2 startup configured"
 
-# Set up daily cleanup cron
-(crontab -l 2>/dev/null | grep -v "previewbot-cleanup"; echo "0 4 * * * docker container prune --filter 'until=24h' -f && docker image prune --filter 'until=48h' -f && docker builder prune --keep-storage=2g -f") | crontab -
+# ── 12. Logrotate ────────────────────────────────────────────────────────────
+echo "==> Installing logrotate config"
 
+LOGROTATE_SRC="${APP_DIR}/scripts/logrotate.conf"
+LOGROTATE_DEST="/etc/logrotate.d/previewbot"
+
+if [[ -f "${LOGROTATE_SRC}" ]]; then
+  cp "${LOGROTATE_SRC}" "${LOGROTATE_DEST}"
+  chmod 644 "${LOGROTATE_DEST}"
+  echo "    Logrotate config installed at ${LOGROTATE_DEST}"
+else
+  echo "WARNING: ${LOGROTATE_SRC} not found — skipping logrotate config" >&2
+fi
+
+# ── 13. Success summary ───────────────────────────────────────────────────────
 echo ""
 echo "========================================="
-echo "  PreviewBot installed successfully!"
+echo "  PreviewBot installation complete!"
 echo "========================================="
 echo ""
-echo "  Service:  http://localhost:3500/health"
-echo "  Domain:   *.${PREVIEW_DOMAIN}"
-echo "  Webhook:  https://${PREVIEW_DOMAIN}:3500/webhook"
-echo "  Secret:   ${WEBHOOK_SECRET}"
+echo "  App directory : ${APP_DIR}"
+echo "  Logs          : /var/log/previewbot/"
+echo "  Secrets dir   : /var/previewbot/secrets  (chmod 700)"
+echo "  PM2 status    : run 'pm2 status' to verify"
 echo ""
-echo "  Next steps:"
-echo "  1. Point *.${PREVIEW_DOMAIN} to this server's IP in Cloudflare"
-echo "  2. Set Cloudflare SSL mode to 'Full'"
-echo "  3. Run: previewbot add <owner/repo>"
+echo "  Next step: verify ${APP_DIR}/.env is fully configured"
 echo ""
