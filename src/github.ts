@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import { config, previewUrl } from "./config.js";
+import type { AuditReport } from "./audit-types.js";
+import { generateAuditReport } from "./audit-report.js";
 
 const octokit = new Octokit({ auth: config.githubToken });
 
@@ -74,11 +76,11 @@ export async function commentBuilding(opts: CommentOptions): Promise<void> {
 
 export async function commentLive(
   opts: CommentOptions,
-  { buildTime, healthStatus }: { buildTime: number; healthStatus: string },
+  { buildTime, healthStatus, audit }: { buildTime: number; healthStatus: string; audit?: AuditReport },
 ): Promise<void> {
   const url = previewUrl(opts.prNumber);
 
-  await upsertComment(opts, [
+  const lines = [
     "## PreviewBot",
     "",
     "| | |",
@@ -86,10 +88,22 @@ export async function commentLive(
     `| Preview | [${url}](${url}) |`,
     `| Status | ${healthStatus === "healthy" ? "Live" : "Unhealthy"} |`,
     `| Built in | ${buildTime}s |`,
+  ];
+
+  if (audit) {
+    const auditSection = generateAuditReport(audit);
+    if (auditSection) {
+      lines.push("", auditSection);
+    }
+  }
+
+  lines.push(
     "",
     "---",
     `*Updated ${new Date().toISOString()} · Powered by [PreviewBot](https://github.com/monstersebas1/previewbot)*`,
-  ].join("\n"));
+  );
+
+  await upsertComment(opts, lines.join("\n"));
 }
 
 export async function commentFailed(

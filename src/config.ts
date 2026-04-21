@@ -26,6 +26,8 @@ export const config = {
   buildTimeout: parseInt(optional("BUILD_TIMEOUT", "600"), 10),
   healthCheckTimeout: parseInt(optional("HEALTH_CHECK_TIMEOUT", "60"), 10),
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  productionUrl: process.env.PRODUCTION_URL,
+  auditTimeout: parseInt(optional("AUDIT_TIMEOUT", "120"), 10),
 } as const;
 
 export function previewPort(prNumber: number): number {
