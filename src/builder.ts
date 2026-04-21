@@ -78,7 +78,13 @@ async function setupSecrets(prNumber: number): Promise<void> {
   }
 }
 
-async function dockerRun(prNumber: number): Promise<void> {
+interface DockerRunOptions {
+  owner: string;
+  repo: string;
+  prNumber: number;
+}
+
+async function dockerRun({ owner, repo, prNumber }: DockerRunOptions): Promise<void> {
   const name = containerName(prNumber);
   const port = previewPort(prNumber);
   const imageName = `previewbot-app:pr-${prNumber}`;
@@ -101,6 +107,7 @@ async function dockerRun(prNumber: number): Promise<void> {
     "--cap-drop=ALL",
     "--restart=no",
     "--label", `preview.pr=${prNumber}`,
+    "--label", `preview.repo=${owner}/${repo}`,
     `--label=preview.created=${new Date().toISOString()}`,
   ];
 
@@ -132,7 +139,7 @@ export async function buildPreview(ctx: BuildContext): Promise<BuildResult> {
     await cloneRepo(ctx);
     await dockerBuild(ctx);
     await setupSecrets(ctx.prNumber);
-    await dockerRun(ctx.prNumber);
+    await dockerRun({ owner: ctx.owner, repo: ctx.repo, prNumber: ctx.prNumber });
 
     const buildTime = Math.round((Date.now() - startTime) / 1000);
     return { success: true, buildTime };

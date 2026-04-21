@@ -5,6 +5,10 @@ vi.mock("chrome-launcher", () => ({
   launch: vi.fn().mockResolvedValue({ port: 9222, kill: vi.fn() }),
 }));
 
+vi.mock("../src/url-validation.js", () => ({
+  assertSafeUrl: vi.fn(),
+}));
+
 const fakeLhr = {
   categories: {
     performance: { score: 0.92 },
@@ -29,7 +33,7 @@ vi.mock("lighthouse", () => ({
 describe("runLighthouse", () => {
   it("returns correct score shape for a single URL", async () => {
     const { runLighthouse } = await import("../src/lighthouse.js");
-    const result: LighthouseResult = await runLighthouse("https://example.com");
+    const result: LighthouseResult = await runLighthouse({ url: "https://example.com" });
 
     expect(result.scores).toEqual({
       performance: 92,
@@ -42,7 +46,7 @@ describe("runLighthouse", () => {
 
   it("returns performance diff when production URL provided", async () => {
     const { runLighthouse } = await import("../src/lighthouse.js");
-    const result = await runLighthouse("https://preview.example.com", "https://example.com");
+    const result = await runLighthouse({ url: "https://preview.example.com", productionUrl: "https://example.com" });
 
     expect(result.performanceDiff).toBeDefined();
     expect(result.performanceDiff).toHaveLength(5);
@@ -56,7 +60,7 @@ describe("runLighthouse", () => {
 
   it("includes all required diff metrics", async () => {
     const { runLighthouse } = await import("../src/lighthouse.js");
-    const result = await runLighthouse("https://preview.example.com", "https://example.com");
+    const result = await runLighthouse({ url: "https://preview.example.com", productionUrl: "https://example.com" });
 
     const metricNames = result.performanceDiff!.map((d) => d.metric);
     expect(metricNames).toEqual(["FCP", "LCP", "TBT", "CLS", "SI"]);

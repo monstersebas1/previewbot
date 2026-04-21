@@ -20,6 +20,10 @@ vi.mock("@axe-core/puppeteer", () => ({
   },
 }));
 
+vi.mock("../src/url-validation.js", () => ({
+  assertSafeUrl: vi.fn(),
+}));
+
 const axeResponse = {
   violations: [
     {

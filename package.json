@@ -17,6 +17,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "lighthouse": "^13.1.0",
+    "p-limit": "^7.3.0",
     "p-queue": "^8.1.0",
     "puppeteer": "^24.42.0",
     "zod": "^4.3.6"

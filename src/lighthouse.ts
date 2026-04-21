@@ -3,6 +3,7 @@ import { join } from "node:path";
 import lighthouse, { type Result, type RunnerResult } from "lighthouse";
 import { launch } from "chrome-launcher";
 import type { LighthouseResult, PerformanceDiff } from "./audit-types.js";
+import { assertSafeUrl } from "./url-validation.js";
 
 interface LighthouseRun {
   lhr: Result;
@@ -100,11 +101,18 @@ async function saveReport(html: string, prNumber: number): Promise<string> {
   return filePath;
 }
 
-export async function runLighthouse(
-  url: string,
-  productionUrl?: string,
-  prNumber?: number,
-): Promise<LighthouseResult> {
+export interface RunLighthouseOptions {
+  url: string;
+  productionUrl?: string;
+  prNumber?: number;
+}
+
+export async function runLighthouse({ url, productionUrl, prNumber }: RunLighthouseOptions): Promise<LighthouseResult> {
+  assertSafeUrl(url);
+  if (productionUrl) {
+    assertSafeUrl(productionUrl);
+  }
+
   const preview = await runOnce(url);
   const scores = extractScores(preview.lhr);
 

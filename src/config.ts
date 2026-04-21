@@ -15,7 +15,13 @@ function optional(key: string, fallback: string): string {
 export const config = {
   githubToken: required("GITHUB_TOKEN"),
   webhookSecret: required("GITHUB_WEBHOOK_SECRET"),
-  previewDomain: required("PREVIEW_DOMAIN"),
+  previewDomain: (() => {
+    const domain = required("PREVIEW_DOMAIN");
+    if (!/^[a-z0-9.-]+$/i.test(domain)) {
+      throw new Error("PREVIEW_DOMAIN contains invalid characters");
+    }
+    return domain;
+  })(),
   port: parseInt(optional("PORT", "3500"), 10),
   deployDir: optional("DEPLOY_DIR", "/var/previewbot/deploys"),
   secretsDir: optional("SECRETS_DIR", "/var/previewbot/secrets"),
@@ -41,7 +47,11 @@ export const config = {
 } as const;
 
 export function previewPort(prNumber: number): number {
-  return 4000 + prNumber;
+  const port = 4000 + prNumber;
+  if (port < 1024 || port > 65535) {
+    throw new Error(`Port ${port} out of valid range for PR #${prNumber}`);
+  }
+  return port;
 }
 
 export function previewUrl(prNumber: number): string {

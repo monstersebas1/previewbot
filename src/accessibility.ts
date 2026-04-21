@@ -1,6 +1,7 @@
 import puppeteer from "puppeteer";
 import { AxePuppeteer } from "@axe-core/puppeteer";
 import type { AxeResult, AxeViolation } from "./audit-types.js";
+import { assertSafeUrl } from "./url-validation.js";
 
 const IMPACT_ORDER: Record<string, number> = {
   critical: 0,
@@ -98,6 +99,8 @@ export async function runAccessibilityAudit(
   url: string,
   paths: string[] = DEFAULT_PATHS,
 ): Promise<AxeResult> {
+  assertSafeUrl(url);
+
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],

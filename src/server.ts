@@ -1,5 +1,6 @@
 import express from "express";
 import PQueue from "p-queue";
+import pLimit from "p-limit";
 import { config } from "./config.js";
 import { verifySignature, commentBuilding, commentLive, commentFailed, commentCleanedUp } from "./github.js";
 import { buildPreview, destroyPreview } from "./builder.js";
@@ -11,7 +12,23 @@ import type { AuditReport, PathAuditResult } from "./audit-types.js";
 
 const app = express();
 const buildQueue = new PQueue({ concurrency: 1 });
-const seenDeliveries = new Set<string>();
+const chromeLimiter = pLimit(2);
+const seenDeliveries = new Map<string, number>();
+const DELIVERY_TTL_MS = 10 * 60 * 1000;
+
+function isDuplicateDelivery(id: string): boolean {
+  const now = Date.now();
+  for (const [key, ts] of seenDeliveries) {
+    if (now - ts > DELIVERY_TTL_MS) seenDeliveries.delete(key);
+  }
+  if (seenDeliveries.has(id)) return true;
+  seenDeliveries.set(id, now);
+  if (seenDeliveries.size > 1000) {
+    const oldest = seenDeliveries.keys().next().value;
+    if (oldest) seenDeliveries.delete(oldest);
+  }
+  return false;
+}
 
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -64,16 +81,16 @@ async function auditPath(
   const fullProductionUrl = productionUrl ? buildFullUrl(productionUrl, path) : undefined;
 
   const [lighthouseResult, axeResult, visualDiffResult] = await Promise.all([
-    withTimeout((async () => {
+    withTimeout(chromeLimiter(async () => {
       try {
         const { runLighthouse } = await import("./lighthouse.js");
-        return await runLighthouse(fullPreviewUrl, fullProductionUrl);
+        return await runLighthouse({ url: fullPreviewUrl, productionUrl: fullProductionUrl, prNumber });
       } catch (err) {
         console.error(`[Audit] Lighthouse failed for ${path}:`, err);
         return undefined;
       }
-    })()),
-    withTimeout((async () => {
+    })),
+    withTimeout(chromeLimiter(async () => {
       try {
         const { runAccessibilityAudit } = await import("./accessibility.js");
         return await runAccessibilityAudit(fullPreviewUrl);
@@ -81,8 +98,8 @@ async function auditPath(
         console.error(`[Audit] axe-core failed for ${path}:`, err);
         return undefined;
       }
-    })()),
-    withTimeout((async () => {
+    })),
+    withTimeout(chromeLimiter(async () => {
       try {
         const { runVisualDiff } = await import("./visual-diff.js");
         return await runVisualDiff({ previewUrl: fullPreviewUrl, productionUrl: fullProductionUrl, prNumber });
@@ -90,7 +107,7 @@ async function auditPath(
         console.error(`[Audit] Visual diff failed for ${path}:`, err);
         return undefined;
       }
-    })()),
+    })),
   ]);
 
   return {
@@ -152,21 +169,19 @@ app.post("/webhook", (req, res) => {
     return;
   }
 
-  if (delivery && seenDeliveries.has(delivery)) {
+  if (delivery && isDuplicateDelivery(delivery)) {
     res.status(200).json({ message: "Duplicate delivery" });
     return;
   }
 
-  if (delivery) {
-    seenDeliveries.add(delivery);
-    if (seenDeliveries.size > 1000) {
-      const oldest = seenDeliveries.values().next().value;
-      if (oldest) seenDeliveries.delete(oldest);
-    }
-  }
-
   const payload = req.body as PRWebhookPayload;
   const { action, number: prNumber } = payload;
+
+  if (!Number.isInteger(prNumber) || prNumber < 1 || prNumber > 60000) {
+    res.status(400).json({ error: "Invalid PR number" });
+    return;
+  }
+
   const { owner: { login: owner }, name: repo, full_name: fullName } = payload.repository;
   const opts = { owner, repo, prNumber };
 
