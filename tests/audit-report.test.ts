@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateAuditReport } from "../src/audit-report.js";
-import type { AuditReport, LighthouseResult, AxeResult } from "../src/audit-types.js";
+import type { AuditReport, LighthouseResult, AxeResult, VisualDiffResult } from "../src/audit-types.js";
 
 const mockLighthouse: LighthouseResult = {
   scores: {
@@ -47,6 +47,7 @@ const mockAxeWithViolations: AxeResult = {
 describe("generateAuditReport", () => {
   it("returns empty string when no audit data", () => {
     const report: AuditReport = {
+      paths: [],
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
     };
@@ -126,6 +127,81 @@ describe("generateAuditReport", () => {
 
     expect(md).toContain("### Performance (Lighthouse)");
     expect(md).toContain("### Accessibility (axe-core)");
+  });
+
+  it("renders visual diff section with changes", () => {
+    const visualDiff: VisualDiffResult = {
+      screenshots: [
+        { viewport: "mobile", width: 375, height: 812, previewPath: "/tmp/preview-mobile.jpg", productionPath: "/tmp/prod-mobile.jpg" },
+        { viewport: "desktop", width: 1440, height: 900, previewPath: "/tmp/preview-desktop.jpg", productionPath: "/tmp/prod-desktop.jpg" },
+      ],
+      changes: [
+        { category: "layout", severity: "critical", description: "Header collapsed on mobile", viewport: "mobile" },
+        { category: "color", severity: "warning", description: "Button color changed from blue to green", viewport: "desktop" },
+        { category: "content", severity: "info", description: "New banner added", viewport: "desktop" },
+      ],
+      summary: "**mobile**: Header broken. **desktop**: Minor color and content changes.",
+      hasProductionComparison: true,
+    };
+
+    const report: AuditReport = {
+      visualDiff,
+      timestamp: "2026-04-21T00:00:00Z",
+      previewUrl: "https://pr-1.preview.example.com",
+    };
+    const md = generateAuditReport(report);
+
+    expect(md).toContain("### Visual Diff (AI)");
+    expect(md).not.toContain("Preview Only");
+    expect(md).toContain("3 changes detected");
+    expect(md).toContain("1 critical");
+    expect(md).toContain("1 warning");
+    expect(md).toContain("Header collapsed on mobile");
+    expect(md).toContain("mobile");
+    expect(md).toContain("desktop");
+    expect(md).toContain("Full AI Analysis");
+  });
+
+  it("renders visual diff with no changes", () => {
+    const visualDiff: VisualDiffResult = {
+      screenshots: [
+        { viewport: "desktop", width: 1440, height: 900, previewPath: "/tmp/preview-desktop.jpg" },
+      ],
+      changes: [],
+      summary: "No issues found.",
+      hasProductionComparison: false,
+    };
+
+    const report: AuditReport = {
+      visualDiff,
+      timestamp: "2026-04-21T00:00:00Z",
+      previewUrl: "https://pr-1.preview.example.com",
+    };
+    const md = generateAuditReport(report);
+
+    expect(md).toContain("### Visual Diff (AI) — Preview Only");
+    expect(md).toContain("No visual issues detected");
+    expect(md).not.toContain("changes detected");
+  });
+
+  it("renders all three audit sections together", () => {
+    const report: AuditReport = {
+      lighthouse: mockLighthouse,
+      axe: mockAxeClean,
+      visualDiff: {
+        screenshots: [],
+        changes: [{ category: "layout", severity: "info", description: "Spacing tweaked", viewport: "desktop" }],
+        summary: "Minor change.",
+        hasProductionComparison: true,
+      },
+      timestamp: "2026-04-21T00:00:00Z",
+      previewUrl: "https://pr-1.preview.example.com",
+    };
+    const md = generateAuditReport(report);
+
+    expect(md).toContain("### Performance (Lighthouse)");
+    expect(md).toContain("### Accessibility (axe-core)");
+    expect(md).toContain("### Visual Diff (AI)");
   });
 
   it("uses red badge for scores below 50", () => {

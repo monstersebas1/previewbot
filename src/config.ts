@@ -28,6 +28,15 @@ export const config = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   productionUrl: process.env.PRODUCTION_URL,
   auditTimeout: parseInt(optional("AUDIT_TIMEOUT", "120"), 10),
+  auditPaths: optional("AUDIT_PATHS", "/").split(",").map((p) => p.trim()).filter(Boolean),
+  checkRunsEnabled: optional("CHECK_RUNS_ENABLED", "true") === "true",
+  thresholdPerformance: parseInt(optional("THRESHOLD_PERFORMANCE", "0"), 10),
+  thresholdAccessibility: parseInt(optional("THRESHOLD_ACCESSIBILITY", "0"), 10),
+  thresholdBestPractices: parseInt(optional("THRESHOLD_BEST_PRACTICES", "0"), 10),
+  thresholdSeo: parseInt(optional("THRESHOLD_SEO", "0"), 10),
+  thresholdAxeCritical: parseInt(optional("THRESHOLD_AXE_CRITICAL", "0"), 10),
+  thresholdAxeSerious: parseInt(optional("THRESHOLD_AXE_SERIOUS", "5"), 10),
+  thresholdVisualCritical: parseInt(optional("THRESHOLD_VISUAL_CRITICAL", "0"), 10),
 } as const;
 
 export function previewPort(prNumber: number): number {

@@ -6,7 +6,8 @@ import { buildPreview, destroyPreview } from "./builder.js";
 import { createRoute, removeRoute } from "./nginx.js";
 import { waitForHealthy } from "./health.js";
 import { cleanupStalePreviews } from "./cleanup.js";
-import type { AuditReport } from "./audit-types.js";
+import { startBuildCheckRun, failBuildCheckRun, runCheckRuns } from "./check-runs.js";
+import type { AuditReport, PathAuditResult } from "./audit-types.js";
 
 const app = express();
 const buildQueue = new PQueue({ concurrency: 1 });
@@ -23,6 +24,7 @@ interface PRWebhookPayload {
   number: number;
   pull_request: {
     head: {
+      sha: string;
       ref: string;
       repo: {
         clone_url: string;
@@ -36,9 +38,21 @@ interface PRWebhookPayload {
   };
 }
 
+function buildFullUrl(baseUrl: string, path: string): string {
+  if (path === "/") return baseUrl;
+  const base = baseUrl.replace(/\/+$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${p}`;
+}
+
 async function runAudits(previewUrl: string, productionUrl?: string): Promise<AuditReport | undefined> {
   const timeout = config.auditTimeout * 1000;
-  const report: AuditReport = { timestamp: new Date().toISOString(), previewUrl, productionUrl };
+  const report: AuditReport = {
+    paths: [],
+    timestamp: new Date().toISOString(),
+    previewUrl,
+    productionUrl,
+  };
 
   const withTimeout = <T>(promise: Promise<T>): Promise<T | undefined> =>
     Promise.race([
@@ -46,31 +60,64 @@ async function runAudits(previewUrl: string, productionUrl?: string): Promise<Au
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeout)),
     ]);
 
-  const [lighthouseResult, axeResult] = await Promise.all([
-    withTimeout((async () => {
-      try {
-        const { runLighthouse } = await import("./lighthouse.js");
-        return await runLighthouse(previewUrl, productionUrl);
-      } catch (err) {
-        console.error("[Audit] Lighthouse failed:", err);
-        return undefined;
-      }
-    })()),
-    withTimeout((async () => {
-      try {
-        const { runAccessibilityAudit } = await import("./accessibility.js");
-        return await runAccessibilityAudit(previewUrl);
-      } catch (err) {
-        console.error("[Audit] axe-core failed:", err);
-        return undefined;
-      }
-    })()),
-  ]);
+  const prNumberMatch = previewUrl.match(/pr-(\d+)\./);
+  const prNumber = prNumberMatch ? parseInt(prNumberMatch[1], 10) : 0;
 
-  report.lighthouse = lighthouseResult ?? undefined;
-  report.axe = axeResult ?? undefined;
+  const paths = config.auditPaths;
 
-  if (!report.lighthouse && !report.axe) {
+  for (const path of paths) {
+    const fullPreviewUrl = buildFullUrl(previewUrl, path);
+    const fullProductionUrl = productionUrl ? buildFullUrl(productionUrl, path) : undefined;
+
+    const [lighthouseResult, axeResult, visualDiffResult] = await Promise.all([
+      withTimeout((async () => {
+        try {
+          const { runLighthouse } = await import("./lighthouse.js");
+          return await runLighthouse(fullPreviewUrl, fullProductionUrl);
+        } catch (err) {
+          console.error(`[Audit] Lighthouse failed for ${path}:`, err);
+          return undefined;
+        }
+      })()),
+      withTimeout((async () => {
+        try {
+          const { runAccessibilityAudit } = await import("./accessibility.js");
+          return await runAccessibilityAudit(fullPreviewUrl);
+        } catch (err) {
+          console.error(`[Audit] axe-core failed for ${path}:`, err);
+          return undefined;
+        }
+      })()),
+      withTimeout((async () => {
+        try {
+          const { runVisualDiff } = await import("./visual-diff.js");
+          return await runVisualDiff({ previewUrl: fullPreviewUrl, productionUrl: fullProductionUrl, prNumber });
+        } catch (err) {
+          console.error(`[Audit] Visual diff failed for ${path}:`, err);
+          return undefined;
+        }
+      })()),
+    ]);
+
+    const pathResult: PathAuditResult = {
+      path,
+      lighthouse: lighthouseResult ?? undefined,
+      axe: axeResult ?? undefined,
+      visualDiff: visualDiffResult ?? undefined,
+    };
+
+    report.paths.push(pathResult);
+  }
+
+  // Backwards compat: populate top-level fields from the first path
+  const firstPath = report.paths[0];
+  if (firstPath) {
+    report.lighthouse = firstPath.lighthouse;
+    report.axe = firstPath.axe;
+    report.visualDiff = firstPath.visualDiff;
+  }
+
+  if (!report.lighthouse && !report.axe && !report.visualDiff) {
     return undefined;
   }
 
@@ -119,6 +166,9 @@ app.post("/webhook", (req, res) => {
 
       await commentBuilding(opts);
 
+      const sha = payload.pull_request.head.sha;
+      const checkRunId = await startBuildCheckRun({ owner, repo, sha });
+
       const result = await buildPreview({
         owner,
         repo,
@@ -130,6 +180,7 @@ app.post("/webhook", (req, res) => {
       if (!result.success) {
         console.error(`[PR #${prNumber}] Build failed: ${result.errorLog}`);
         await commentFailed(opts, result.errorLog ?? "Unknown error");
+        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
         await destroyPreview(prNumber);
         return;
       }
@@ -141,6 +192,7 @@ app.post("/webhook", (req, res) => {
 
       if (healthStatus === "unhealthy") {
         await commentFailed(opts, "App started but failed health checks (no response after 60s)");
+        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: "Health checks failed" });
         await destroyPreview(prNumber);
         await removeRoute(prNumber);
         return;
@@ -150,6 +202,7 @@ app.post("/webhook", (req, res) => {
       const audit = await runAudits(url, config.productionUrl);
 
       await commentLive(opts, { buildTime: result.buildTime, healthStatus, audit });
+      await runCheckRuns({ owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit: audit ?? undefined });
     });
 
     return;

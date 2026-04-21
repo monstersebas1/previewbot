@@ -32,9 +32,40 @@ export interface AxeResult {
   totalViolations: number;
 }
 
-export interface AuditReport {
+export interface ViewportScreenshot {
+  viewport: string;
+  width: number;
+  height: number;
+  previewPath: string;
+  productionPath?: string;
+}
+
+export interface VisualChange {
+  category: "layout" | "color" | "content" | "responsive" | "regression" | "improvement";
+  severity: "info" | "warning" | "critical";
+  description: string;
+  viewport: string;
+}
+
+export interface VisualDiffResult {
+  screenshots: ViewportScreenshot[];
+  changes: VisualChange[];
+  summary: string;
+  hasProductionComparison: boolean;
+}
+
+export interface PathAuditResult {
+  path: string;
   lighthouse?: LighthouseResult;
   axe?: AxeResult;
+  visualDiff?: VisualDiffResult;
+}
+
+export interface AuditReport {
+  paths: PathAuditResult[];
+  lighthouse?: LighthouseResult;
+  axe?: AxeResult;
+  visualDiff?: VisualDiffResult;
   timestamp: string;
   previewUrl: string;
   productionUrl?: string;

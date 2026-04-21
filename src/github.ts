@@ -4,7 +4,7 @@ import { config, previewUrl } from "./config.js";
 import type { AuditReport } from "./audit-types.js";
 import { generateAuditReport } from "./audit-report.js";
 
-const octokit = new Octokit({ auth: config.githubToken });
+export const octokit: InstanceType<typeof Octokit> = new Octokit({ auth: config.githubToken });
 
 const MARKER = "<!-- previewbot -->";
 

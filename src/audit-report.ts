@@ -1,4 +1,4 @@
-import type { AuditReport, LighthouseResult, AxeResult } from "./audit-types.js";
+import type { AuditReport, LighthouseResult, AxeResult, PathAuditResult, VisualDiffResult } from "./audit-types.js";
 
 function scoreBadge(score: number): string {
   if (score >= 90) return `🟢 ${score}`;
@@ -84,15 +84,90 @@ function renderAxe(axe: AxeResult): string {
   return lines.join("\n");
 }
 
+function severityIcon(severity: string): string {
+  const icons: Record<string, string> = {
+    critical: "🔴",
+    warning: "🟡",
+    info: "🔵",
+  };
+  return icons[severity] ?? "🔵";
+}
+
+function renderVisualDiff(visualDiff: VisualDiffResult): string {
+  const lines: string[] = [
+    `### Visual Diff (AI)${visualDiff.hasProductionComparison ? "" : " — Preview Only"}`,
+    "",
+  ];
+
+  if (visualDiff.changes.length === 0) {
+    lines.push("No visual issues detected.");
+    return lines.join("\n");
+  }
+
+  const critical = visualDiff.changes.filter((c) => c.severity === "critical").length;
+  const warnings = visualDiff.changes.filter((c) => c.severity === "warning").length;
+
+  const parts = [`${visualDiff.changes.length} changes detected`];
+  if (critical > 0) parts.push(`${critical} critical`);
+  if (warnings > 0) parts.push(`${warnings} warning`);
+  lines.push(`${parts.join(" (")}${critical > 0 || warnings > 0 ? ")" : ""}`);
+
+  lines.push(
+    "",
+    "| Viewport | Severity | Category | Description |",
+    "|---|---|---|---|",
+  );
+
+  for (const c of visualDiff.changes) {
+    lines.push(`| ${c.viewport} | ${severityIcon(c.severity)} ${c.severity} | ${c.category} | ${c.description} |`);
+  }
+
+  lines.push(
+    "",
+    "<details><summary>Full AI Analysis</summary>",
+    "",
+    visualDiff.summary,
+    "",
+    "</details>",
+  );
+
+  return lines.join("\n");
+}
+
+function renderPathSections(pathResult: PathAuditResult): string[] {
+  const sections: string[] = [];
+  if (pathResult.lighthouse) {
+    sections.push(renderLighthouse(pathResult.lighthouse));
+  }
+  if (pathResult.axe) {
+    sections.push(renderAxe(pathResult.axe));
+  }
+  if (pathResult.visualDiff) {
+    sections.push(renderVisualDiff(pathResult.visualDiff));
+  }
+  return sections;
+}
+
 export function generateAuditReport(report: AuditReport): string {
   const sections: string[] = [];
 
-  if (report.lighthouse) {
-    sections.push(renderLighthouse(report.lighthouse));
-  }
-
-  if (report.axe) {
-    sections.push(renderAxe(report.axe));
+  if (report.paths && report.paths.length > 1) {
+    for (const pathResult of report.paths) {
+      const pathSections = renderPathSections(pathResult);
+      if (pathSections.length > 0) {
+        sections.push(`#### ${pathResult.path}\n\n${pathSections.join("\n\n")}`);
+      }
+    }
+  } else {
+    if (report.lighthouse) {
+      sections.push(renderLighthouse(report.lighthouse));
+    }
+    if (report.axe) {
+      sections.push(renderAxe(report.axe));
+    }
+    if (report.visualDiff) {
+      sections.push(renderVisualDiff(report.visualDiff));
+    }
   }
 
   if (sections.length === 0) {
