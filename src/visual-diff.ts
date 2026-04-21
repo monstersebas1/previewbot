@@ -95,7 +95,7 @@ async function analyzeViewport(
   const prompt = screenshot.productionPath ? COMPARISON_PROMPT : SINGLE_REVIEW_PROMPT;
 
   const message = await client.messages.create({
-    model: "claude-sonnet-4-5-20250929",
+    model: config.visualDiffModel,
     max_tokens: 1024,
     messages: [{ role: "user", content: [...content, { type: "text", text: prompt }] }],
   });

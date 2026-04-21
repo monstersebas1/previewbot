@@ -56,6 +56,7 @@ describe("generateAuditReport", () => {
 
   it("renders lighthouse scores with correct badges", () => {
     const report: AuditReport = {
+      paths: [],
       lighthouse: mockLighthouse,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -72,6 +73,7 @@ describe("generateAuditReport", () => {
 
   it("renders lighthouse diff table when present", () => {
     const report: AuditReport = {
+      paths: [],
       lighthouse: mockLighthouseWithDiff,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -87,6 +89,7 @@ describe("generateAuditReport", () => {
 
   it("renders clean axe result", () => {
     const report: AuditReport = {
+      paths: [],
       axe: mockAxeClean,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -100,6 +103,7 @@ describe("generateAuditReport", () => {
 
   it("renders axe violations with impact icons", () => {
     const report: AuditReport = {
+      paths: [],
       axe: mockAxeWithViolations,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -118,6 +122,7 @@ describe("generateAuditReport", () => {
 
   it("renders both lighthouse and axe together", () => {
     const report: AuditReport = {
+      paths: [],
       lighthouse: mockLighthouse,
       axe: mockAxeWithViolations,
       timestamp: "2026-04-21T00:00:00Z",
@@ -145,6 +150,7 @@ describe("generateAuditReport", () => {
     };
 
     const report: AuditReport = {
+      paths: [],
       visualDiff,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -173,6 +179,7 @@ describe("generateAuditReport", () => {
     };
 
     const report: AuditReport = {
+      paths: [],
       visualDiff,
       timestamp: "2026-04-21T00:00:00Z",
       previewUrl: "https://pr-1.preview.example.com",
@@ -186,6 +193,7 @@ describe("generateAuditReport", () => {
 
   it("renders all three audit sections together", () => {
     const report: AuditReport = {
+      paths: [],
       lighthouse: mockLighthouse,
       axe: mockAxeClean,
       visualDiff: {
@@ -204,8 +212,30 @@ describe("generateAuditReport", () => {
     expect(md).toContain("### Visual Diff (AI)");
   });
 
+  it("renders single-path report from paths[0] when no top-level fields", () => {
+    const report: AuditReport = {
+      paths: [
+        {
+          path: "/home",
+          lighthouse: mockLighthouse,
+          axe: mockAxeClean,
+        },
+      ],
+      timestamp: "2026-04-21T00:00:00Z",
+      previewUrl: "https://pr-1.preview.example.com",
+    };
+    const md = generateAuditReport(report);
+
+    expect(md).toContain("### Performance (Lighthouse)");
+    expect(md).toContain("🟢 95");
+    expect(md).toContain("### Accessibility (axe-core)");
+    expect(md).toContain("No violations found");
+    expect(md).not.toContain("#### /home");
+  });
+
   it("uses red badge for scores below 50", () => {
     const report: AuditReport = {
+      paths: [],
       lighthouse: {
         scores: { performance: 32, accessibility: 49, bestPractices: 50, seo: 89 },
       },

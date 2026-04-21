@@ -1,4 +1,5 @@
 import type { AuditReport, LighthouseResult, AxeResult, PathAuditResult, VisualDiffResult } from "./audit-types.js";
+import { sanitizeMarkdown } from "./sanitize-markdown.js";
 
 function scoreBadge(score: number): string {
   if (score >= 90) return `🟢 ${score}`;
@@ -78,7 +79,7 @@ function renderAxe(axe: AxeResult): string {
   );
 
   for (const v of axe.violations) {
-    lines.push(`| ${v.id} | ${impactIcon(v.impact)} ${v.impact} | ${v.description} | ${v.nodes} |`);
+    lines.push(`| ${v.id} | ${impactIcon(v.impact)} ${v.impact} | ${sanitizeMarkdown(v.description)} | ${v.nodes} |`);
   }
 
   return lines.join("\n");
@@ -119,7 +120,7 @@ function renderVisualDiff(visualDiff: VisualDiffResult): string {
   );
 
   for (const c of visualDiff.changes) {
-    lines.push(`| ${c.viewport} | ${severityIcon(c.severity)} ${c.severity} | ${c.category} | ${c.description} |`);
+    lines.push(`| ${c.viewport} | ${severityIcon(c.severity)} ${c.severity} | ${sanitizeMarkdown(c.category)} | ${sanitizeMarkdown(c.description)} |`);
   }
 
   lines.push(
@@ -158,6 +159,8 @@ export function generateAuditReport(report: AuditReport): string {
         sections.push(`#### ${pathResult.path}\n\n${pathSections.join("\n\n")}`);
       }
     }
+  } else if (report.paths && report.paths.length === 1) {
+    sections.push(...renderPathSections(report.paths[0]));
   } else {
     if (report.lighthouse) {
       sections.push(renderLighthouse(report.lighthouse));

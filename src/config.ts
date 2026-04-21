@@ -37,6 +37,7 @@ export const config = {
   thresholdAxeCritical: parseInt(optional("THRESHOLD_AXE_CRITICAL", "0"), 10),
   thresholdAxeSerious: parseInt(optional("THRESHOLD_AXE_SERIOUS", "5"), 10),
   thresholdVisualCritical: parseInt(optional("THRESHOLD_VISUAL_CRITICAL", "0"), 10),
+  visualDiffModel: optional("VISUAL_DIFF_MODEL", "claude-sonnet-4-5-20250929"),
 } as const;
 
 export function previewPort(prNumber: number): number {

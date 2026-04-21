@@ -1,5 +1,6 @@
 import { octokit } from "./github.js";
 import { config } from "./config.js";
+import { sanitizeMarkdown } from "./sanitize-markdown.js";
 import type {
   AuditReport,
   AxeViolation,
@@ -112,7 +113,7 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
       failures.push(`${criticalCount} critical a11y violations (max: ${config.thresholdAxeCritical})`);
     }
 
-    if (seriousCount > config.thresholdAxeSerious) {
+    if (config.thresholdAxeSerious >= 0 && seriousCount > config.thresholdAxeSerious) {
       failures.push(`${seriousCount} serious a11y violations (max: ${config.thresholdAxeSerious})`);
     }
 
@@ -121,7 +122,7 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
         makeAnnotation(
           axeImpactToLevel(violation.impact),
           `axe: ${violation.id} (${violation.impact})`,
-          `${violation.description} — ${violation.nodes} node(s) affected`,
+          `${sanitizeMarkdown(violation.description)} — ${violation.nodes} node(s) affected`,
         ),
       );
     }
@@ -154,7 +155,7 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
           makeAnnotation(
             change.severity === "critical" ? "failure" : "warning",
             `Visual: ${change.category} (${change.severity})`,
-            `${change.description} — viewport: ${change.viewport}`,
+            `${sanitizeMarkdown(change.description)} — viewport: ${change.viewport}`,
           ),
         );
       }
@@ -219,7 +220,7 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
     conclusion,
     title,
     summary: summaryLines.join("\n"),
-    annotations: truncated ? finalAnnotations : finalAnnotations,
+    annotations: finalAnnotations,
   };
 }
 
