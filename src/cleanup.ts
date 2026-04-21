@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { getPRState } from "./github.js";
 import { destroyPreview } from "./builder.js";
 import { removeRoute } from "./nginx.js";
+import { log } from "./logger.js";
 
 const execAsync = promisify(exec);
 

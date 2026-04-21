@@ -3,6 +3,7 @@ import { AxePuppeteer } from "@axe-core/puppeteer";
 import type { AxeImpact, AxeResult, AxeViolation } from "./audit-types.js";
 import { assertSafeUrl } from "./url-validation.js";
 import { config } from "./config.js";
+import { log } from "./logger.js";
 
 const IMPACT_ORDER: Record<string, number> = {
   critical: 0,
@@ -52,7 +53,7 @@ async function scanPage(
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[axe] scan failed for ${pageUrl}: ${message}`);
+    log.error(`axe scan failed for ${pageUrl}`, { error: message });
     return { ...emptyResult(), scanError: message };
   } finally {
     await page.close();

@@ -1,6 +1,7 @@
 import { octokit } from "./github.js";
 import { config } from "./config.js";
 import { sanitizeMarkdown } from "./sanitize-markdown.js";
+import { log } from "./logger.js";
 import type {
   AuditReport,
   AxeViolation,
@@ -250,7 +251,7 @@ export async function startBuildCheckRun(opts: {
     });
     return data.id;
   } catch (err) {
-    console.error("[CheckRuns] Failed to create check run:", err);
+    log.error("Failed to create check run", { error: String(err) });
     return undefined;
   }
 }
@@ -274,7 +275,7 @@ export async function failBuildCheckRun(opts: {
       },
     });
   } catch (err) {
-    console.error("[CheckRuns] Failed to update check run:", err);
+    log.error("Failed to update check run", { error: String(err) });
   }
 }
 
@@ -332,6 +333,6 @@ export async function runCheckRuns(opts: {
       },
     });
   } catch (err) {
-    console.error("[CheckRuns] Failed to run check runs:", err);
+    log.error("Failed to run check runs", { error: String(err) });
   }
 }

@@ -9,6 +9,8 @@ import { waitForHealthy } from "./health.js";
 import { cleanupStalePreviews } from "./cleanup.js";
 import { startBuildCheckRun, failBuildCheckRun, runCheckRuns } from "./check-runs.js";
 import type { AuditReport, PathAuditResult } from "./audit-types.js";
+import { log } from "./logger.js";
+import { recordBuildStart, recordBuildSuccess, recordBuildFailure, recordCleanup, getMetrics } from "./metrics.js";
 
 const app = express();
 const buildQueue = new PQueue({ concurrency: 1 });
@@ -86,7 +88,7 @@ async function auditPath(
         const { runLighthouse } = await import("./lighthouse.js");
         return await runLighthouse({ url: fullPreviewUrl, productionUrl: fullProductionUrl, prNumber });
       } catch (err) {
-        console.error(`[Audit] Lighthouse failed for ${path}:`, err);
+        log.error(`Lighthouse failed for ${path}`, { error: String(err) });
         return undefined;
       }
     })),
@@ -95,7 +97,7 @@ async function auditPath(
         const { runAccessibilityAudit } = await import("./accessibility.js");
         return await runAccessibilityAudit(fullPreviewUrl);
       } catch (err) {
-        console.error(`[Audit] axe-core failed for ${path}:`, err);
+        log.error(`axe-core failed for ${path}`, { error: String(err) });
         return undefined;
       }
     })),
@@ -104,7 +106,7 @@ async function auditPath(
         const { runVisualDiff } = await import("./visual-diff.js");
         return await runVisualDiff({ previewUrl: fullPreviewUrl, productionUrl: fullProductionUrl, prNumber });
       } catch (err) {
-        console.error(`[Audit] Visual diff failed for ${path}:`, err);
+        log.error(`Visual diff failed for ${path}`, { error: String(err) });
         return undefined;
       }
     })),
@@ -189,7 +191,8 @@ app.post("/webhook", (req, res) => {
     res.status(202).json({ message: "Build queued" });
 
     buildQueue.add(async () => {
-      console.log(`[PR #${prNumber}] Build starting for ${fullName}`);
+      log.info("Build starting", { prNumber, action, repo: fullName });
+      recordBuildStart();
 
       await commentBuilding(opts);
 
@@ -205,7 +208,8 @@ app.post("/webhook", (req, res) => {
       });
 
       if (!result.success) {
-        console.error(`[PR #${prNumber}] Build failed: ${result.errorLog}`);
+        log.error("Build failed", { prNumber, error: result.errorLog });
+        recordBuildFailure(result.buildTime * 1000);
         await commentFailed(opts, result.errorLog ?? "Unknown error");
         if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
         await destroyPreview(prNumber);
@@ -215,7 +219,8 @@ app.post("/webhook", (req, res) => {
       await createRoute(prNumber);
 
       const healthStatus = await waitForHealthy(prNumber);
-      console.log(`[PR #${prNumber}] Health: ${healthStatus}, built in ${result.buildTime}s`);
+      log.info("Build complete", { prNumber, healthStatus, duration: result.buildTime });
+      recordBuildSuccess(result.buildTime * 1000);
 
       if (healthStatus === "unhealthy") {
         await commentFailed(opts, "App started but failed health checks (no response after 60s)");
@@ -239,7 +244,7 @@ app.post("/webhook", (req, res) => {
     res.status(202).json({ message: "Cleanup queued" });
 
     buildQueue.add(async () => {
-      console.log(`[PR #${prNumber}] Cleaning up preview for ${fullName}`);
+      log.info("Cleaning up preview", { prNumber, repo: fullName });
       await destroyPreview(prNumber);
       await removeRoute(prNumber);
       await commentCleanedUp(opts);
@@ -252,10 +257,17 @@ app.post("/webhook", (req, res) => {
 });
 
 app.get("/health", (_req, res) => {
+  const m = getMetrics();
   res.json({
     status: "ok",
     queue: { size: buildQueue.size, pending: buildQueue.pending },
     uptime: process.uptime(),
+    totalBuilds: m.totalBuilds,
+    successCount: m.successCount,
+    failCount: m.failCount,
+    avgBuildTimeMs: m.avgBuildTimeMs,
+    lastCleanupAt: m.lastCleanupAt,
+    queueDepth: buildQueue.size + buildQueue.pending,
   });
 });
 
@@ -283,20 +295,23 @@ app.get("/previews", async (_req, res) => {
 // Cleanup cron: run every 6 hours — routed through buildQueue to prevent concurrent nginx writes
 setInterval(() => {
   buildQueue.add(async () => {
-    console.log("[Cleanup] Running stale preview cleanup...");
+    log.info("Running stale preview cleanup");
     try {
       const cleaned = await cleanupStalePreviews();
+      recordCleanup();
       if (cleaned.length > 0) {
-        console.log(`[Cleanup] Removed: ${cleaned.join(", ")}`);
+        log.info("Cleanup removed previews", { removed: cleaned.join(", ") });
       }
     } catch (err) {
-      console.error("[Cleanup] Error:", err);
+      log.error("Cleanup error", { error: String(err) });
     }
   });
 }, 6 * 60 * 60 * 1000);
 
-app.listen(config.port, () => {
-  console.log(`PreviewBot running on port ${config.port}`);
-  console.log(`Preview domain: *.${config.previewDomain}`);
-  console.log(`Build queue concurrency: 1`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(config.port, () => {
+    log.info("PreviewBot running", { port: config.port, domain: config.previewDomain });
+  });
+}
+
+export { app };

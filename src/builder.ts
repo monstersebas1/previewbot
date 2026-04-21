@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { copyFile, mkdir, rm, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { config, previewPort, containerName } from "./config.js";
+import { log } from "./logger.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -33,7 +34,7 @@ async function checkDiskSpace(): Promise<boolean> {
     const availGB = parseInt(stdout.trim().replace("G", ""), 10);
     return availGB >= 2;
   } catch (err) {
-    console.warn("[Builder] Disk space check failed:", err);
+    log.warn("Disk space check failed", { error: String(err) });
     return true;
   }
 }
@@ -162,7 +163,7 @@ export async function destroyPreview(prNumber: number): Promise<void> {
       name,
     ]);
     if (!stdout.trim()) {
-      console.warn(`[Builder] Skipping destroy: container ${name} is not a previewbot container`);
+      log.warn("Skipping destroy: not a previewbot container", { container: name });
       return;
     }
   } catch {

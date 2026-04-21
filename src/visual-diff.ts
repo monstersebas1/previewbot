@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ViewportScreenshot, VisualChange, VisualDiffResult } from "./audit-types.js";
 import { config } from "./config.js";
 import { captureScreenshots } from "./screenshot.js";
+import { log } from "./logger.js";
 
 const COMPARISON_PROMPT = `You are a visual QA engineer comparing two screenshots of the same web page — a preview deployment vs production.
 
@@ -125,7 +126,7 @@ export async function runVisualDiff({
   prNumber,
 }: VisualDiffOptions): Promise<VisualDiffResult | undefined> {
   if (!config.anthropicApiKey) {
-    console.log("[VisualDiff] Skipped — ANTHROPIC_API_KEY not set");
+    log.info("Visual diff skipped — ANTHROPIC_API_KEY not set");
     return undefined;
   }
 
@@ -153,7 +154,7 @@ export async function runVisualDiff({
       hasProductionComparison: !!productionUrl,
     };
   } catch (err) {
-    console.warn("[VisualDiff] Failed, skipping:", err instanceof Error ? err.message : err);
+    log.warn("Visual diff failed, skipping", { error: err instanceof Error ? err.message : String(err) });
     return undefined;
   }
 }
