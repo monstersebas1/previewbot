@@ -17,6 +17,15 @@ function generateConf(prNumber: number): string {
   return `server {
     listen 80;
     server_name ${serverName};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${serverName};
+
+    ssl_certificate ${config.sslCertPath};
+    ssl_certificate_key ${config.sslKeyPath};
 
     location / {
         proxy_pass http://127.0.0.1:${port};

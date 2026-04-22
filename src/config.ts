@@ -46,6 +46,8 @@ export const config = {
   visualDiffModel: optional("VISUAL_DIFF_MODEL", "claude-sonnet-4-5-20250929"),
   disableChromeSandbox: optional("DISABLE_CHROME_SANDBOX", "true") === "true",
   reportDir: optional("REPORT_DIR", "/var/previewbot/reports"),
+  sslCertPath: optional("SSL_CERT_PATH", "/etc/letsencrypt/live/preview.weautomatehq.cloud/fullchain.pem"),
+  sslKeyPath: optional("SSL_KEY_PATH", "/etc/letsencrypt/live/preview.weautomatehq.cloud/privkey.pem"),
 };
 
 export function previewPort(prNumber: number): number {
