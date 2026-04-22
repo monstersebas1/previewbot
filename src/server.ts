@@ -258,61 +258,75 @@ app.post("/webhook", (req, res) => {
     res.status(202).json({ message: "Build queued" });
 
     buildQueue.add(async () => {
-      log.info("Build starting", { prNumber, action, repo: fullName, installationId });
-      recordBuildStart();
+      const startTime = Date.now();
+      let buildId: number | undefined;
 
-      const octokit = await resolveOctokit(installationId);
-      const cloneToken = await resolveCloneToken(installationId);
-      const commentOpts = { octokit, owner, repo, prNumber };
+      try {
+        log.info("Build starting", { prNumber, action, repo: fullName, installationId });
+        recordBuildStart();
 
-      await commentBuilding(commentOpts);
+        const octokit = await resolveOctokit(installationId);
+        const cloneToken = await resolveCloneToken(installationId);
+        const commentOpts = { octokit, owner, repo, prNumber };
 
-      const sha = payload.pull_request.head.sha;
-      const buildId = saveBuild({ installationId: installationId ?? null, repoFullName: fullName, prNumber, sha });
-      const checkRunId = await startBuildCheckRun({ octokit, owner, repo, sha });
+        await commentBuilding(commentOpts);
 
-      const result = await buildPreview({
-        owner,
-        repo,
-        prNumber,
-        branch: payload.pull_request.head.ref,
-        cloneUrl: payload.pull_request.head.repo.clone_url,
-        cloneToken,
-        installationId,
-      });
+        const sha = payload.pull_request.head.sha;
+        buildId = saveBuild({ installationId: installationId ?? null, repoFullName: fullName, prNumber, sha });
+        const checkRunId = await startBuildCheckRun({ octokit, owner, repo, sha });
 
-      if (!result.success) {
-        log.error("Build failed", { prNumber, error: result.errorLog });
-        recordBuildFailure(result.buildTime * 1000);
-        updateBuild(buildId, "failed", result.buildTime * 1000);
-        await commentFailed(commentOpts, result.errorLog ?? "Unknown error");
-        if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
-        await destroyPreview(prNumber);
-        return;
+        const result = await buildPreview({
+          owner,
+          repo,
+          prNumber,
+          branch: payload.pull_request.head.ref,
+          cloneUrl: payload.pull_request.head.repo.clone_url,
+          cloneToken,
+          installationId,
+        });
+
+        if (!result.success) {
+          log.error("Build failed", { prNumber, error: result.errorLog });
+          recordBuildFailure(result.buildTime * 1000);
+          updateBuild(buildId, "failed", result.buildTime * 1000);
+          await commentFailed(commentOpts, result.errorLog ?? "Unknown error");
+          if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
+          await destroyPreview(prNumber);
+          return;
+        }
+
+        await createRoute(prNumber);
+
+        const healthStatus = await waitForHealthy(prNumber);
+        log.info("Build complete", { prNumber, healthStatus, duration: result.buildTime });
+        recordBuildSuccess(result.buildTime * 1000);
+
+        if (healthStatus === "unhealthy") {
+          updateBuild(buildId, "failed", result.buildTime * 1000);
+          await commentFailed(commentOpts, "App started but failed health checks (no response after 60s)");
+          if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: "Health checks failed" });
+          await destroyPreview(prNumber);
+          await removeRoute(prNumber);
+          return;
+        }
+
+        updateBuild(buildId, "live", result.buildTime * 1000);
+
+        const url = `https://pr-${prNumber}.${config.previewDomain}`;
+        const audit = await runAudits({ previewUrl: url, prNumber, productionUrl: config.productionUrl });
+
+        await commentLive(commentOpts, { buildTime: result.buildTime, healthStatus, audit });
+        await runCheckRuns({ octokit, owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit });
+      } catch (err) {
+        const elapsed = Date.now() - startTime;
+        log.error("Build queue error", { prNumber, repo: fullName, error: String(err) });
+        recordBuildFailure(elapsed);
+        if (buildId !== undefined) {
+          try { updateBuild(buildId, "failed", elapsed); } catch { /* best effort */ }
+        }
+        try { await destroyPreview(prNumber); } catch { /* best effort */ }
+        try { await removeRoute(prNumber); } catch { /* best effort */ }
       }
-
-      await createRoute(prNumber);
-
-      const healthStatus = await waitForHealthy(prNumber);
-      log.info("Build complete", { prNumber, healthStatus, duration: result.buildTime });
-      recordBuildSuccess(result.buildTime * 1000);
-
-      if (healthStatus === "unhealthy") {
-        updateBuild(buildId, "failed", result.buildTime * 1000);
-        await commentFailed(commentOpts, "App started but failed health checks (no response after 60s)");
-        if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: "Health checks failed" });
-        await destroyPreview(prNumber);
-        await removeRoute(prNumber);
-        return;
-      }
-
-      updateBuild(buildId, "live", result.buildTime * 1000);
-
-      const url = `https://pr-${prNumber}.${config.previewDomain}`;
-      const audit = await runAudits({ previewUrl: url, prNumber, productionUrl: config.productionUrl });
-
-      await commentLive(commentOpts, { buildTime: result.buildTime, healthStatus, audit });
-      await runCheckRuns({ octokit, owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit });
     });
 
     return;
@@ -322,11 +336,19 @@ app.post("/webhook", (req, res) => {
     res.status(202).json({ message: "Cleanup queued" });
 
     buildQueue.add(async () => {
-      log.info("Cleaning up preview", { prNumber, repo: fullName });
-      const octokit = await resolveOctokit(installationId);
-      await destroyPreview(prNumber);
-      await removeRoute(prNumber);
-      await commentCleanedUp({ octokit, owner, repo, prNumber });
+      try {
+        log.info("Cleaning up preview", { prNumber, repo: fullName });
+        await destroyPreview(prNumber);
+        await removeRoute(prNumber);
+        try {
+          const octokit = await resolveOctokit(installationId);
+          await commentCleanedUp({ octokit, owner, repo, prNumber });
+        } catch (commentErr) {
+          log.warn("Failed to post cleanup comment", { prNumber, error: String(commentErr) });
+        }
+      } catch (err) {
+        log.error("Cleanup queue error", { prNumber, repo: fullName, error: String(err) });
+      }
     });
 
     return;
@@ -372,8 +394,13 @@ app.get("/previews", async (_req, res) => {
   }
 });
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 app.get("/setup", (req, res) => {
-  const installationId = req.query.installation_id as string | undefined;
+  const rawInstallationId = req.query.installation_id as string | undefined;
+  const installationId = escapeHtml(rawInstallationId ?? "unknown");
   const setupAction = req.query.setup_action as string | undefined;
 
   res.send(`<!DOCTYPE html>
@@ -393,7 +420,7 @@ app.get("/setup", (req, res) => {
   ${setupAction === "install"
     ? `<p class="success">Installation successful!</p>
        <div class="info">
-         <p>Installation ID: <code>${installationId ?? "unknown"}</code></p>
+         <p>Installation ID: <code>${installationId}</code></p>
          <p>PreviewBot is now active on your selected repositories. Open a pull request to see it in action.</p>
        </div>
        <p>To configure environment variables for your previews, add a <code>.previewbot.yml</code> file to your repo root:</p>
