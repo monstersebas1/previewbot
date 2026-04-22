@@ -15,6 +15,8 @@ interface BuildContext {
   prNumber: number;
   branch: string;
   cloneUrl: string;
+  cloneToken: string;
+  installationId?: number;
 }
 
 function deployPath(prNumber: number): string {
@@ -40,8 +42,7 @@ async function checkDiskSpace(): Promise<boolean> {
   }
 }
 
-function authenticatedCloneUrl(cloneUrl: string): string {
-  const token = config.githubToken;
+function authenticatedCloneUrl(cloneUrl: string, token: string): string {
   if (!token) return cloneUrl;
   return cloneUrl.replace("https://", `https://x-access-token:${token}@`);
 }
@@ -53,7 +54,7 @@ async function cloneRepo(ctx: BuildContext): Promise<void> {
 
   await execFileAsync(
     "git",
-    ["clone", "--depth", "1", "--branch", ctx.branch, authenticatedCloneUrl(ctx.cloneUrl), dir],
+    ["clone", "--depth", "1", "--branch", ctx.branch, authenticatedCloneUrl(ctx.cloneUrl, ctx.cloneToken), dir],
     { timeout: 120_000 },
   );
 }
@@ -99,10 +100,11 @@ interface DockerRunOptions {
   owner: string;
   repo: string;
   prNumber: number;
+  installationId?: number;
   env?: Record<string, string>;
 }
 
-async function dockerRun({ owner, repo, prNumber, env }: DockerRunOptions): Promise<void> {
+async function dockerRun({ owner, repo, prNumber, installationId, env }: DockerRunOptions): Promise<void> {
   const name = containerName(prNumber);
   const port = previewPort(prNumber);
   const imageName = `previewbot-app:pr-${prNumber}`;
@@ -127,6 +129,7 @@ async function dockerRun({ owner, repo, prNumber, env }: DockerRunOptions): Prom
     "--label", `preview.pr=${prNumber}`,
     "--label", `preview.repo=${owner}/${repo}`,
     `--label=preview.created=${new Date().toISOString()}`,
+    `--label=preview.installation=${installationId ?? ""}`,
   ];
 
   if (env) {
@@ -168,7 +171,7 @@ export async function buildPreview(ctx: BuildContext): Promise<BuildResult> {
 
     await dockerBuild(ctx);
     await setupSecrets(ctx.prNumber);
-    await dockerRun({ owner: ctx.owner, repo: ctx.repo, prNumber: ctx.prNumber, env });
+    await dockerRun({ owner: ctx.owner, repo: ctx.repo, prNumber: ctx.prNumber, installationId: ctx.installationId, env });
 
     const buildTime = Math.round((Date.now() - startTime) / 1000);
     return { success: true, buildTime };

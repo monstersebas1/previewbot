@@ -13,14 +13,11 @@ const mockConfig = vi.hoisted(() => ({
   thresholdVisualCritical: 0,
 }));
 
-// Mock github.ts to avoid needing GITHUB_TOKEN
-vi.mock("../src/github.js", () => ({
-  octokit: {
-    rest: {
-      checks: {
-        create: vi.fn(),
-        update: vi.fn(),
-      },
+const mockOctokit = vi.hoisted(() => ({
+  rest: {
+    checks: {
+      create: vi.fn(),
+      update: vi.fn(),
     },
   },
 }));
@@ -30,7 +27,8 @@ vi.mock("../src/config.js", () => ({
 }));
 
 import { evaluateAudit, startBuildCheckRun, runCheckRuns } from "../src/check-runs.js";
-import { octokit } from "../src/github.js";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const octokit = mockOctokit as any;
 
 function makeReport(overrides: Partial<AuditReport> = {}): AuditReport {
   return {
@@ -269,7 +267,7 @@ describe("evaluateAudit", () => {
   });
 });
 
-const mockChecks = octokit.rest.checks as {
+const mockChecks = mockOctokit.rest.checks as {
   create: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
 };
@@ -284,7 +282,7 @@ describe("startBuildCheckRun", () => {
   it("creates an in_progress check run and returns its id", async () => {
     mockChecks.create.mockResolvedValue({ data: { id: 42 } });
 
-    const id = await startBuildCheckRun({ owner: "o", repo: "r", sha: "abc" });
+    const id = await startBuildCheckRun({ octokit, owner: "o", repo: "r", sha: "abc" });
 
     expect(id).toBe(42);
     expect(mockChecks.create).toHaveBeenCalledWith(
@@ -295,7 +293,7 @@ describe("startBuildCheckRun", () => {
   it("returns undefined when check runs are disabled", async () => {
     mockConfig.checkRunsEnabled = false;
 
-    const id = await startBuildCheckRun({ owner: "o", repo: "r", sha: "abc" });
+    const id = await startBuildCheckRun({ octokit, owner: "o", repo: "r", sha: "abc" });
 
     expect(id).toBeUndefined();
     expect(mockChecks.create).not.toHaveBeenCalled();
@@ -312,7 +310,7 @@ describe("runCheckRuns", () => {
   it("updates existing check run instead of creating a new one when checkRunId is provided", async () => {
     mockChecks.update.mockResolvedValue({});
 
-    await runCheckRuns({ owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
+    await runCheckRuns({ octokit, owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
 
     expect(mockChecks.create).not.toHaveBeenCalled();
     expect(mockChecks.update).toHaveBeenCalledWith(
@@ -324,7 +322,7 @@ describe("runCheckRuns", () => {
     mockChecks.create.mockResolvedValue({ data: { id: 99 } });
     mockChecks.update.mockResolvedValue({});
 
-    await runCheckRuns({ owner: "o", repo: "r", sha: "abc", prNumber: 1 });
+    await runCheckRuns({ octokit, owner: "o", repo: "r", sha: "abc", prNumber: 1 });
 
     expect(mockChecks.create).toHaveBeenCalled();
     expect(mockChecks.update).toHaveBeenCalledWith(
@@ -339,7 +337,7 @@ describe("runCheckRuns", () => {
       paths: [{ path: "/", lighthouse: makeLighthouse({ performance: 90 }) }],
     });
 
-    await runCheckRuns({ owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42, audit: report });
+    await runCheckRuns({ octokit, owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42, audit: report });
 
     expect(mockChecks.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -353,7 +351,7 @@ describe("runCheckRuns", () => {
   it("completes with neutral conclusion when no audit data", async () => {
     mockChecks.update.mockResolvedValue({});
 
-    await runCheckRuns({ owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
+    await runCheckRuns({ octokit, owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
 
     expect(mockChecks.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -366,7 +364,7 @@ describe("runCheckRuns", () => {
   it("skips when check runs are disabled", async () => {
     mockConfig.checkRunsEnabled = false;
 
-    await runCheckRuns({ owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
+    await runCheckRuns({ octokit, owner: "o", repo: "r", sha: "abc", prNumber: 1, checkRunId: 42 });
 
     expect(mockChecks.create).not.toHaveBeenCalled();
     expect(mockChecks.update).not.toHaveBeenCalled();

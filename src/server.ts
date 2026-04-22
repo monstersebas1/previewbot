@@ -3,6 +3,8 @@ import PQueue from "p-queue";
 import pLimit from "p-limit";
 import { config } from "./config.js";
 import { verifySignature, commentBuilding, commentLive, commentFailed, commentCleanedUp } from "./github.js";
+import { resolveOctokit, resolveCloneToken, isAppMode } from "./github-app.js";
+import { getInstallationForRepo, saveInstallation, removeInstallation, setInstallationRepos, addInstallationRepos, removeInstallationRepos, saveBuild, updateBuild, getDb } from "./db.js";
 import { buildPreview, destroyPreview } from "./builder.js";
 import { createRoute, removeRoute } from "./nginx.js";
 import { waitForHealthy } from "./health.js";
@@ -41,6 +43,7 @@ app.use(express.json({
 interface PRWebhookPayload {
   action: string;
   number: number;
+  installation?: { id: number };
   pull_request: {
     head: {
       sha: string;
@@ -55,6 +58,25 @@ interface PRWebhookPayload {
     name: string;
     full_name: string;
   };
+}
+
+interface InstallationWebhookPayload {
+  action: string;
+  installation: {
+    id: number;
+    account: {
+      login: string;
+      type: string;
+    };
+  };
+  repositories?: Array<{ full_name: string }>;
+}
+
+interface InstallationReposWebhookPayload {
+  action: string;
+  installation: { id: number };
+  repositories_added?: Array<{ full_name: string }>;
+  repositories_removed?: Array<{ full_name: string }>;
 }
 
 function buildFullUrl(baseUrl: string, path: string): string {
@@ -140,7 +162,6 @@ async function runAudits({ previewUrl, prNumber, productionUrl }: RunAuditsOptio
     productionUrl,
   };
 
-  // Backwards compat: populate top-level fields from the first path
   const firstPath = report.paths[0];
   if (firstPath) {
     report.lighthouse = firstPath.lighthouse;
@@ -155,6 +176,40 @@ async function runAudits({ previewUrl, prNumber, productionUrl }: RunAuditsOptio
   return report;
 }
 
+function handleInstallationEvent(payload: InstallationWebhookPayload): void {
+  const { action, installation, repositories } = payload;
+  const { id, account } = installation;
+
+  if (action === "created") {
+    saveInstallation(id, account.login, account.type);
+    if (repositories) {
+      setInstallationRepos(id, repositories.map((r) => r.full_name));
+    }
+    log.info("App installed", { installationId: id, account: account.login, repos: repositories?.length ?? 0 });
+  } else if (action === "deleted") {
+    removeInstallation(id);
+    log.info("App uninstalled", { installationId: id, account: account.login });
+  }
+}
+
+function handleInstallationReposEvent(payload: InstallationReposWebhookPayload): void {
+  const { action, installation } = payload;
+
+  if (action === "added" && payload.repositories_added) {
+    addInstallationRepos(installation.id, payload.repositories_added.map((r) => r.full_name));
+    log.info("Repos added to installation", {
+      installationId: installation.id,
+      repos: payload.repositories_added.map((r) => r.full_name),
+    });
+  } else if (action === "removed" && payload.repositories_removed) {
+    removeInstallationRepos(installation.id, payload.repositories_removed.map((r) => r.full_name));
+    log.info("Repos removed from installation", {
+      installationId: installation.id,
+      repos: payload.repositories_removed.map((r) => r.full_name),
+    });
+  }
+}
+
 app.post("/webhook", (req, res) => {
   const signature = req.headers["x-hub-signature-256"] as string | undefined;
   const delivery = req.headers["x-github-delivery"] as string | undefined;
@@ -166,13 +221,25 @@ app.post("/webhook", (req, res) => {
     return;
   }
 
-  if (event !== "pull_request") {
-    res.status(200).json({ message: "Ignored event" });
+  if (delivery && isDuplicateDelivery(delivery)) {
+    res.status(200).json({ message: "Duplicate delivery" });
     return;
   }
 
-  if (delivery && isDuplicateDelivery(delivery)) {
-    res.status(200).json({ message: "Duplicate delivery" });
+  if (event === "installation") {
+    handleInstallationEvent(req.body as InstallationWebhookPayload);
+    res.status(200).json({ message: "Installation event processed" });
+    return;
+  }
+
+  if (event === "installation_repositories") {
+    handleInstallationReposEvent(req.body as InstallationReposWebhookPayload);
+    res.status(200).json({ message: "Repository event processed" });
+    return;
+  }
+
+  if (event !== "pull_request") {
+    res.status(200).json({ message: "Ignored event" });
     return;
   }
 
@@ -185,19 +252,24 @@ app.post("/webhook", (req, res) => {
   }
 
   const { owner: { login: owner }, name: repo, full_name: fullName } = payload.repository;
-  const opts = { owner, repo, prNumber };
+  const installationId = payload.installation?.id ?? getInstallationForRepo(fullName);
 
   if (action === "opened" || action === "synchronize" || action === "reopened") {
     res.status(202).json({ message: "Build queued" });
 
     buildQueue.add(async () => {
-      log.info("Build starting", { prNumber, action, repo: fullName });
+      log.info("Build starting", { prNumber, action, repo: fullName, installationId });
       recordBuildStart();
 
-      await commentBuilding(opts);
+      const octokit = await resolveOctokit(installationId);
+      const cloneToken = await resolveCloneToken(installationId);
+      const commentOpts = { octokit, owner, repo, prNumber };
+
+      await commentBuilding(commentOpts);
 
       const sha = payload.pull_request.head.sha;
-      const checkRunId = await startBuildCheckRun({ owner, repo, sha });
+      const buildId = saveBuild({ installationId: installationId ?? null, repoFullName: fullName, prNumber, sha });
+      const checkRunId = await startBuildCheckRun({ octokit, owner, repo, sha });
 
       const result = await buildPreview({
         owner,
@@ -205,13 +277,16 @@ app.post("/webhook", (req, res) => {
         prNumber,
         branch: payload.pull_request.head.ref,
         cloneUrl: payload.pull_request.head.repo.clone_url,
+        cloneToken,
+        installationId,
       });
 
       if (!result.success) {
         log.error("Build failed", { prNumber, error: result.errorLog });
         recordBuildFailure(result.buildTime * 1000);
-        await commentFailed(opts, result.errorLog ?? "Unknown error");
-        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
+        updateBuild(buildId, "failed", result.buildTime * 1000);
+        await commentFailed(commentOpts, result.errorLog ?? "Unknown error");
+        if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
         await destroyPreview(prNumber);
         return;
       }
@@ -223,18 +298,21 @@ app.post("/webhook", (req, res) => {
       recordBuildSuccess(result.buildTime * 1000);
 
       if (healthStatus === "unhealthy") {
-        await commentFailed(opts, "App started but failed health checks (no response after 60s)");
-        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: "Health checks failed" });
+        updateBuild(buildId, "failed", result.buildTime * 1000);
+        await commentFailed(commentOpts, "App started but failed health checks (no response after 60s)");
+        if (checkRunId) await failBuildCheckRun({ octokit, owner, repo, checkRunId, errorLog: "Health checks failed" });
         await destroyPreview(prNumber);
         await removeRoute(prNumber);
         return;
       }
 
+      updateBuild(buildId, "live", result.buildTime * 1000);
+
       const url = `https://pr-${prNumber}.${config.previewDomain}`;
       const audit = await runAudits({ previewUrl: url, prNumber, productionUrl: config.productionUrl });
 
-      await commentLive(opts, { buildTime: result.buildTime, healthStatus, audit });
-      await runCheckRuns({ owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit });
+      await commentLive(commentOpts, { buildTime: result.buildTime, healthStatus, audit });
+      await runCheckRuns({ octokit, owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit });
     });
 
     return;
@@ -245,9 +323,10 @@ app.post("/webhook", (req, res) => {
 
     buildQueue.add(async () => {
       log.info("Cleaning up preview", { prNumber, repo: fullName });
+      const octokit = await resolveOctokit(installationId);
       await destroyPreview(prNumber);
       await removeRoute(prNumber);
-      await commentCleanedUp(opts);
+      await commentCleanedUp({ octokit, owner, repo, prNumber });
     });
 
     return;
@@ -260,6 +339,7 @@ app.get("/health", (_req, res) => {
   const m = getMetrics();
   res.json({
     status: "ok",
+    mode: isAppMode() ? "github-app" : "legacy-pat",
     queue: { size: buildQueue.size, pending: buildQueue.pending },
     uptime: process.uptime(),
     totalBuilds: m.totalBuilds,
@@ -292,7 +372,40 @@ app.get("/previews", async (_req, res) => {
   }
 });
 
-// Cleanup cron: run every 6 hours — routed through buildQueue to prevent concurrent nginx writes
+app.get("/setup", (req, res) => {
+  const installationId = req.query.installation_id as string | undefined;
+  const setupAction = req.query.setup_action as string | undefined;
+
+  res.send(`<!DOCTYPE html>
+<html>
+<head><title>PreviewBot — Setup</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #1a1a1a; }
+  h1 { font-size: 1.5rem; }
+  .success { color: #16a34a; }
+  .info { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 16px; margin: 24px 0; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+  <h1>PreviewBot</h1>
+  ${setupAction === "install"
+    ? `<p class="success">Installation successful!</p>
+       <div class="info">
+         <p>Installation ID: <code>${installationId ?? "unknown"}</code></p>
+         <p>PreviewBot is now active on your selected repositories. Open a pull request to see it in action.</p>
+       </div>
+       <p>To configure environment variables for your previews, add a <code>.previewbot.yml</code> file to your repo root:</p>
+       <pre><code>framework: nextjs
+env:
+  NEXT_PUBLIC_API_URL: "{{preview_url}}/api"</code></pre>`
+    : `<p>Visit <a href="https://github.com/apps/previewbot">GitHub</a> to install PreviewBot.</p>`
+  }
+</body>
+</html>`);
+});
+
 setInterval(() => {
   buildQueue.add(async () => {
     log.info("Running stale preview cleanup");
@@ -309,8 +422,13 @@ setInterval(() => {
 }, 6 * 60 * 60 * 1000);
 
 if (process.env.NODE_ENV !== "test") {
+  getDb();
   app.listen(config.port, () => {
-    log.info("PreviewBot running", { port: config.port, domain: config.previewDomain });
+    log.info("PreviewBot running", {
+      port: config.port,
+      domain: config.previewDomain,
+      mode: isAppMode() ? "github-app" : "legacy-pat",
+    });
   });
 }
 

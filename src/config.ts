@@ -13,8 +13,11 @@ function optional(key: string, fallback: string): string {
 }
 
 export const config = {
-  githubToken: required("GITHUB_TOKEN"),
+  githubToken: process.env.GITHUB_TOKEN ?? "",
   webhookSecret: required("GITHUB_WEBHOOK_SECRET"),
+  appId: process.env.GITHUB_APP_ID ?? "",
+  privateKeyPath: process.env.GITHUB_APP_PRIVATE_KEY_PATH ?? "",
+  databasePath: optional("DATABASE_PATH", "/var/previewbot/previewbot.db"),
   previewDomain: (() => {
     const domain = required("PREVIEW_DOMAIN");
     if (!/^[a-z0-9.-]+$/i.test(domain)) {

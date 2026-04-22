@@ -1,10 +1,9 @@
 import crypto from "node:crypto";
-import { Octokit } from "@octokit/rest";
-import { config, previewUrl } from "./config.js";
+import type { Octokit } from "@octokit/rest";
+import { previewUrl } from "./config.js";
+import { config } from "./config.js";
 import type { AuditReport } from "./audit-types.js";
 import { generateAuditReport } from "./audit-report.js";
-
-export const octokit: InstanceType<typeof Octokit> = new Octokit({ auth: config.githubToken });
 
 const MARKER = "<!-- previewbot -->";
 
@@ -25,12 +24,13 @@ export function verifySignature(payload: string, signature: string): boolean {
 }
 
 interface CommentOptions {
+  octokit: InstanceType<typeof Octokit>;
   owner: string;
   repo: string;
   prNumber: number;
 }
 
-async function findBotComment({ owner, repo, prNumber }: CommentOptions): Promise<number | null> {
+async function findBotComment({ octokit, owner, repo, prNumber }: CommentOptions): Promise<number | null> {
   for (let page = 1; ; page++) {
     const { data } = await octokit.rest.issues.listComments({
       owner,
@@ -46,22 +46,22 @@ async function findBotComment({ owner, repo, prNumber }: CommentOptions): Promis
   }
 }
 
-async function upsertComment({ owner, repo, prNumber }: CommentOptions, body: string): Promise<void> {
+async function upsertComment(opts: CommentOptions, body: string): Promise<void> {
   const markedBody = `${MARKER}\n${body}`;
-  const commentId = await findBotComment({ owner, repo, prNumber });
+  const commentId = await findBotComment(opts);
 
   if (commentId) {
-    await octokit.rest.issues.updateComment({
-      owner,
-      repo,
+    await opts.octokit.rest.issues.updateComment({
+      owner: opts.owner,
+      repo: opts.repo,
       comment_id: commentId,
       body: markedBody,
     });
   } else {
-    await octokit.rest.issues.createComment({
-      owner,
-      repo,
-      issue_number: prNumber,
+    await opts.octokit.rest.issues.createComment({
+      owner: opts.owner,
+      repo: opts.repo,
+      issue_number: opts.prNumber,
       body: markedBody,
     });
   }
@@ -150,6 +150,7 @@ export async function commentCleanedUp(opts: CommentOptions): Promise<void> {
 }
 
 export async function getPRState(
+  octokit: InstanceType<typeof Octokit>,
   owner: string,
   repo: string,
   prNumber: number,

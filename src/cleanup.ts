@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getPRState } from "./github.js";
+import { resolveOctokit } from "./github-app.js";
 import { destroyPreview } from "./builder.js";
 import { removeRoute } from "./nginx.js";
 import { log } from "./logger.js";
@@ -12,12 +13,13 @@ interface PreviewContainer {
   prNumber: number;
   repo: string;
   created: string;
+  installationId?: number;
 }
 
 async function listPreviews(): Promise<PreviewContainer[]> {
   try {
     const { stdout } = await execAsync(
-      `docker ps -a --filter "label=preview.pr" --format "{{.Names}}|{{.Label \"preview.pr\"}}|{{.Label \"preview.repo\"}}|{{.Label \"preview.created\"}}"`,
+      `docker ps -a --filter "label=preview.pr" --format "{{.Names}}|{{.Label \"preview.pr\"}}|{{.Label \"preview.repo\"}}|{{.Label \"preview.created\"}}|{{.Label \"preview.installation\"}}"`,
     );
 
     return stdout
@@ -25,8 +27,14 @@ async function listPreviews(): Promise<PreviewContainer[]> {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, pr, repo, created] = line.split("|");
-        return { name, prNumber: parseInt(pr, 10), repo, created };
+        const [name, pr, repo, created, installation] = line.split("|");
+        return {
+          name,
+          prNumber: parseInt(pr, 10),
+          repo,
+          created,
+          installationId: installation ? parseInt(installation, 10) || undefined : undefined,
+        };
       });
   } catch {
     return [];
@@ -51,12 +59,16 @@ export async function cleanupStalePreviews(): Promise<string[]> {
     } else if (preview.repo) {
       try {
         const [owner, repo] = preview.repo.split("/");
-        const state = await getPRState(owner, repo, preview.prNumber);
+        const octokit = await resolveOctokit(preview.installationId);
+        const state = await getPRState(octokit, owner, repo, preview.prNumber);
         if (state === "closed") {
           shouldClean = true;
         }
       } catch {
-        // Can't check PR state — skip for now
+        log.warn("Cannot check PR state for cleanup", {
+          repo: preview.repo,
+          prNumber: preview.prNumber,
+        });
       }
     }
 

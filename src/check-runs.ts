@@ -1,4 +1,4 @@
-import { octokit } from "./github.js";
+import type { Octokit } from "@octokit/rest";
 import { config } from "./config.js";
 import { sanitizeMarkdown } from "./sanitize-markdown.js";
 import { log } from "./logger.js";
@@ -235,6 +235,7 @@ export function evaluateAudit(report: AuditReport): AuditEvaluation {
 }
 
 export async function startBuildCheckRun(opts: {
+  octokit: InstanceType<typeof Octokit>;
   owner: string;
   repo: string;
   sha: string;
@@ -242,7 +243,7 @@ export async function startBuildCheckRun(opts: {
   if (!config.checkRunsEnabled) return undefined;
 
   try {
-    const { data } = await octokit.rest.checks.create({
+    const { data } = await opts.octokit.rest.checks.create({
       owner: opts.owner,
       repo: opts.repo,
       head_sha: opts.sha,
@@ -257,13 +258,14 @@ export async function startBuildCheckRun(opts: {
 }
 
 export async function failBuildCheckRun(opts: {
+  octokit: InstanceType<typeof Octokit>;
   owner: string;
   repo: string;
   checkRunId: number;
   errorLog: string;
 }): Promise<void> {
   try {
-    await octokit.rest.checks.update({
+    await opts.octokit.rest.checks.update({
       owner: opts.owner,
       repo: opts.repo,
       check_run_id: opts.checkRunId,
@@ -280,6 +282,7 @@ export async function failBuildCheckRun(opts: {
 }
 
 export async function runCheckRuns(opts: {
+  octokit: InstanceType<typeof Octokit>;
   owner: string;
   repo: string;
   sha: string;
@@ -293,7 +296,7 @@ export async function runCheckRuns(opts: {
     let checkRunId = opts.checkRunId;
 
     if (!checkRunId) {
-      const { data } = await octokit.rest.checks.create({
+      const { data } = await opts.octokit.rest.checks.create({
         owner: opts.owner,
         repo: opts.repo,
         head_sha: opts.sha,
@@ -304,7 +307,7 @@ export async function runCheckRuns(opts: {
     }
 
     if (!opts.audit) {
-      await octokit.rest.checks.update({
+      await opts.octokit.rest.checks.update({
         owner: opts.owner,
         repo: opts.repo,
         check_run_id: checkRunId,
@@ -320,7 +323,7 @@ export async function runCheckRuns(opts: {
 
     const evaluation = evaluateAudit(opts.audit);
 
-    await octokit.rest.checks.update({
+    await opts.octokit.rest.checks.update({
       owner: opts.owner,
       repo: opts.repo,
       check_run_id: checkRunId,
