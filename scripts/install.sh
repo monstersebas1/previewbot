@@ -82,8 +82,9 @@ fi
 # ── 7. npm install + build ───────────────────────────────────────────────────
 echo "==> Installing dependencies and building"
 cd "${APP_DIR}"
-npm ci --omit=dev
+npm ci
 npm run build
+npm prune --omit=dev
 echo "    Build complete"
 
 # ── 8. .env setup ────────────────────────────────────────────────────────────

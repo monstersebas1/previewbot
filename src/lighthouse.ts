@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import lighthouse, { type Result, type RunnerResult } from "lighthouse";
 import { launch } from "chrome-launcher";
+import puppeteer from "puppeteer";
 import type { LighthouseResult, PerformanceDiff } from "./audit-types.js";
 import { assertSafeUrl } from "./url-validation.js";
 import { config } from "./config.js";
@@ -57,7 +58,8 @@ async function runOnce(url: string): Promise<LighthouseRun> {
   if (config.disableChromeSandbox) {
     chromeFlags.push("--no-sandbox");
   }
-  const chrome = await launch({ chromeFlags });
+  const chromePath = process.env.CHROME_PATH || puppeteer.executablePath();
+  const chrome = await launch({ chromeFlags, chromePath });
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 

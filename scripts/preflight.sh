@@ -12,13 +12,13 @@ run_check() {
 
   if "$@" >/dev/null 2>&1; then
     echo "  PASS  $label"
-    ((PASS++))
+    PASS=$((PASS + 1))
   elif [[ "$critical" == "true" ]]; then
     echo "  FAIL  $label"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   else
     echo "  WARN  $label"
-    ((WARN++))
+    WARN=$((WARN + 1))
   fi
 }
 
@@ -40,6 +40,8 @@ run_check "GITHUB_WEBHOOK_SECRET is set" true check_env_set GITHUB_WEBHOOK_SECRE
 run_check "PREVIEW_DOMAIN is set" true check_env_set PREVIEW_DOMAIN
 
 run_check "GitHub token is valid" true check_github_token
+
+run_check "Chrome/Chromium available" false command -v chromium-browser || command -v google-chrome || command -v chromium
 
 run_check "Port 3500 is available" true check_port_free 3500
 
