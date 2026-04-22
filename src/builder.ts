@@ -4,6 +4,7 @@ import { copyFile, mkdir, rm, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { config, previewPort, containerName } from "./config.js";
 import { log } from "./logger.js";
+import { loadPreviewConfig, envToFileContent } from "./preview-config.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -39,6 +40,12 @@ async function checkDiskSpace(): Promise<boolean> {
   }
 }
 
+function authenticatedCloneUrl(cloneUrl: string): string {
+  const token = config.githubToken;
+  if (!token) return cloneUrl;
+  return cloneUrl.replace("https://", `https://x-access-token:${token}@`);
+}
+
 async function cloneRepo(ctx: BuildContext): Promise<void> {
   const dir = deployPath(ctx.prNumber);
   await rm(dir, { recursive: true, force: true });
@@ -46,9 +53,17 @@ async function cloneRepo(ctx: BuildContext): Promise<void> {
 
   await execFileAsync(
     "git",
-    ["clone", "--depth", "1", "--branch", ctx.branch, ctx.cloneUrl, dir],
+    ["clone", "--depth", "1", "--branch", ctx.branch, authenticatedCloneUrl(ctx.cloneUrl), dir],
     { timeout: 120_000 },
   );
+}
+
+async function writeEnvFile(
+  repoDir: string,
+  env: Record<string, string>,
+): Promise<void> {
+  if (Object.keys(env).length === 0) return;
+  await writeFile(path.join(repoDir, ".env.local"), envToFileContent(env), "utf-8");
 }
 
 async function dockerBuild(ctx: BuildContext): Promise<void> {
@@ -84,9 +99,10 @@ interface DockerRunOptions {
   owner: string;
   repo: string;
   prNumber: number;
+  env?: Record<string, string>;
 }
 
-async function dockerRun({ owner, repo, prNumber }: DockerRunOptions): Promise<void> {
+async function dockerRun({ owner, repo, prNumber, env }: DockerRunOptions): Promise<void> {
   const name = containerName(prNumber);
   const port = previewPort(prNumber);
   const imageName = `previewbot-app:pr-${prNumber}`;
@@ -112,6 +128,12 @@ async function dockerRun({ owner, repo, prNumber }: DockerRunOptions): Promise<v
     "--label", `preview.repo=${owner}/${repo}`,
     `--label=preview.created=${new Date().toISOString()}`,
   ];
+
+  if (env) {
+    for (const [key, value] of Object.entries(env)) {
+      args.push("-e", `${key}=${value}`);
+    }
+  }
 
   const secretsDirExists = await stat(secrets).then(() => true).catch(() => false);
   if (secretsDirExists) {
@@ -139,9 +161,14 @@ export async function buildPreview(ctx: BuildContext): Promise<BuildResult> {
     }
 
     await cloneRepo(ctx);
+
+    const dir = deployPath(ctx.prNumber);
+    const env = await loadPreviewConfig(dir, ctx.prNumber);
+    await writeEnvFile(dir, env);
+
     await dockerBuild(ctx);
     await setupSecrets(ctx.prNumber);
-    await dockerRun({ owner: ctx.owner, repo: ctx.repo, prNumber: ctx.prNumber });
+    await dockerRun({ owner: ctx.owner, repo: ctx.repo, prNumber: ctx.prNumber, env });
 
     const buildTime = Math.round((Date.now() - startTime) / 1000);
     return { success: true, buildTime };
