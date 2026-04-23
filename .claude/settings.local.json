@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vitest *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(cd /tmp)",
+      "Bash(mkdir -p previewbot-test-app)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Bash(git checkout *)",
+      "Bash(gh pr create --base master --title 'feat: update landing page for preview testing' --body ' *)",
+      "Bash(ssh *)",
+      "Bash(git rm *)",
+      "Bash(nslookup *)",
+      "Bash(scp *)",
+      "Bash(npm install *)"
+    ]
+  }
+}
