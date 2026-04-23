@@ -163,7 +163,7 @@ export async function buildPreview(ctx: BuildContext): Promise<BuildResult> {
     await cloneRepo(ctx);
 
     const dir = deployPath(ctx.prNumber);
-    const env = await loadPreviewConfig(dir, ctx.prNumber);
+    const env = await loadPreviewConfig(dir, ctx.prNumber, ctx.owner, ctx.repo, config.secretsDir);
     await writeEnvFile(dir, env);
 
     await dockerBuild(ctx);

@@ -29,10 +29,46 @@ function resolveTemplates(
   return resolved;
 }
 
+async function loadServerEnv(
+  owner: string,
+  repo: string,
+  secretsDir: string,
+  prNumber: number,
+): Promise<Record<string, string>> {
+  const envPath = path.join(secretsDir, owner, `${repo}.env`);
+  try {
+    const raw = await readFile(envPath, "utf-8");
+    const env: Record<string, string> = {};
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      env[key] = val;
+    }
+    log.info("Loaded server-side env", { owner, repo, keys: Object.keys(env), prNumber });
+    return env;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn("Failed to read server env file", { envPath, error: String(err) });
+    }
+    return {};
+  }
+}
+
 export async function loadPreviewConfig(
   repoDir: string,
   prNumber: number,
+  owner = "",
+  repo = "",
+  secretsDir = "",
 ): Promise<Record<string, string>> {
+  const serverEnv = owner && repo && secretsDir
+    ? await loadServerEnv(owner, repo, secretsDir, prNumber)
+    : {};
+
   for (const filename of [".previewbot.yml", ".previewbot.yaml"]) {
     const configPath = path.join(repoDir, filename);
 
@@ -42,16 +78,17 @@ export async function loadPreviewConfig(
 
       if (!parsed?.env || typeof parsed.env !== "object") {
         log.info("Found config but no env section", { file: filename, prNumber });
-        return {};
+        return serverEnv;
       }
 
-      const env = resolveTemplates(parsed.env, prNumber);
+      const repoEnv = resolveTemplates(parsed.env, prNumber);
       log.info("Loaded preview config", {
         file: filename,
-        keys: Object.keys(env),
+        keys: Object.keys(repoEnv),
         prNumber,
       });
-      return env;
+      // Server-side env takes precedence over repo config
+      return { ...repoEnv, ...serverEnv };
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         continue;
@@ -59,14 +96,15 @@ export async function loadPreviewConfig(
       log.warn("Failed to parse preview config", {
         file: filename,
         error: String(err),
-        prNumber,
       });
-      return {};
+      return serverEnv;
     }
   }
 
-  log.info("No .previewbot.yml found, building without env config", { prNumber });
-  return {};
+  if (Object.keys(serverEnv).length === 0) {
+    log.info("No .previewbot.yml found, building without env config", { prNumber });
+  }
+  return serverEnv;
 }
 
 export function envToFileContent(env: Record<string, string>): string {
