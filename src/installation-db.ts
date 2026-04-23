@@ -61,11 +61,18 @@ export function addRepos(
   repos: Array<{ owner: string; repo: string }>,
 ): void {
   const db = getDb();
+  // Ensure installation row exists — installation_repositories events can arrive
+  // before (or without) a corresponding installation created event.
+  const ensureInstallation = db.prepare(
+    `INSERT OR IGNORE INTO installations (id, account_login, account_type, installed_at)
+     VALUES (?, '', 'unknown', ?)`,
+  );
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO installation_repos (installation_id, owner, repo)
      VALUES (?, ?, ?)`,
   );
   db.transaction(() => {
+    ensureInstallation.run(installationId, Date.now());
     for (const { owner, repo } of repos) {
       stmt.run(installationId, owner, repo);
     }
