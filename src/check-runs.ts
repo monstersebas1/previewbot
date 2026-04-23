@@ -1,4 +1,4 @@
-import { octokit } from "./github.js";
+import { getOctokit } from "./github.js";
 import { config } from "./config.js";
 import { sanitizeMarkdown } from "./sanitize-markdown.js";
 import { log } from "./logger.js";
@@ -238,11 +238,12 @@ export async function startBuildCheckRun(opts: {
   owner: string;
   repo: string;
   sha: string;
+  installationId?: number;
 }): Promise<number | undefined> {
   if (!config.checkRunsEnabled) return undefined;
 
   try {
-    const { data } = await octokit.rest.checks.create({
+    const { data } = await getOctokit(opts.installationId).rest.checks.create({
       owner: opts.owner,
       repo: opts.repo,
       head_sha: opts.sha,
@@ -261,9 +262,10 @@ export async function failBuildCheckRun(opts: {
   repo: string;
   checkRunId: number;
   errorLog: string;
+  installationId?: number;
 }): Promise<void> {
   try {
-    await octokit.rest.checks.update({
+    await getOctokit(opts.installationId).rest.checks.update({
       owner: opts.owner,
       repo: opts.repo,
       check_run_id: opts.checkRunId,
@@ -286,14 +288,17 @@ export async function runCheckRuns(opts: {
   prNumber: number;
   checkRunId?: number;
   audit?: AuditReport;
+  installationId?: number;
 }): Promise<void> {
   if (!config.checkRunsEnabled) return;
+
+  const oc = getOctokit(opts.installationId);
 
   try {
     let checkRunId = opts.checkRunId;
 
     if (!checkRunId) {
-      const { data } = await octokit.rest.checks.create({
+      const { data } = await oc.rest.checks.create({
         owner: opts.owner,
         repo: opts.repo,
         head_sha: opts.sha,
@@ -304,7 +309,7 @@ export async function runCheckRuns(opts: {
     }
 
     if (!opts.audit) {
-      await octokit.rest.checks.update({
+      await oc.rest.checks.update({
         owner: opts.owner,
         repo: opts.repo,
         check_run_id: checkRunId,
@@ -320,7 +325,7 @@ export async function runCheckRuns(opts: {
 
     const evaluation = evaluateAudit(opts.audit);
 
-    await octokit.rest.checks.update({
+    await oc.rest.checks.update({
       owner: opts.owner,
       repo: opts.repo,
       check_run_id: checkRunId,

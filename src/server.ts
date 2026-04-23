@@ -3,6 +3,7 @@ import PQueue from "p-queue";
 import pLimit from "p-limit";
 import { config } from "./config.js";
 import { verifySignature, commentBuilding, commentLive, commentFailed, commentCleanedUp } from "./github.js";
+import { saveInstallation, deleteInstallation, addRepos, removeRepos } from "./installation-db.js";
 import { buildPreview, destroyPreview } from "./builder.js";
 import { createRoute, removeRoute } from "./nginx.js";
 import { waitForHealthy } from "./health.js";
@@ -41,6 +42,7 @@ app.use(express.json({
 interface PRWebhookPayload {
   action: string;
   number: number;
+  installation?: { id: number };
   pull_request: {
     head: {
       sha: string;
@@ -55,6 +57,29 @@ interface PRWebhookPayload {
     name: string;
     full_name: string;
   };
+}
+
+interface InstallationPayload {
+  action: string;
+  installation: {
+    id: number;
+    account: { login: string; type: string };
+  };
+  repositories?: Array<{ full_name: string }>;
+}
+
+interface InstallationReposPayload {
+  action: "added" | "removed";
+  installation: { id: number };
+  repositories_added?: Array<{ full_name: string }>;
+  repositories_removed?: Array<{ full_name: string }>;
+}
+
+function parseRepos(list: Array<{ full_name: string }>): Array<{ owner: string; repo: string }> {
+  return list.map(({ full_name }) => {
+    const [owner, repo] = full_name.split("/");
+    return { owner, repo };
+  });
 }
 
 function buildFullUrl(baseUrl: string, path: string): string {
@@ -166,6 +191,43 @@ app.post("/webhook", (req, res) => {
     return;
   }
 
+  if (event === "installation") {
+    const payload = req.body as InstallationPayload;
+    const { action, installation, repositories } = payload;
+
+    if (action === "created") {
+      saveInstallation(
+        installation.id,
+        installation.account.login,
+        installation.account.type,
+        repositories ? parseRepos(repositories) : [],
+      );
+      log.info("App installed", { installationId: installation.id, account: installation.account.login });
+    } else if (action === "deleted") {
+      deleteInstallation(installation.id);
+      log.info("App uninstalled", { installationId: installation.id });
+    }
+
+    res.status(200).json({ message: `Installation ${action}` });
+    return;
+  }
+
+  if (event === "installation_repositories") {
+    const payload = req.body as InstallationReposPayload;
+    const { action, installation, repositories_added, repositories_removed } = payload;
+
+    if (action === "added" && repositories_added?.length) {
+      addRepos(installation.id, parseRepos(repositories_added));
+      log.info("Repos added to installation", { installationId: installation.id, count: repositories_added.length });
+    } else if (action === "removed" && repositories_removed?.length) {
+      removeRepos(installation.id, parseRepos(repositories_removed));
+      log.info("Repos removed from installation", { installationId: installation.id, count: repositories_removed.length });
+    }
+
+    res.status(200).json({ message: `Repos ${action}` });
+    return;
+  }
+
   if (event !== "pull_request") {
     res.status(200).json({ message: "Ignored event" });
     return;
@@ -178,6 +240,7 @@ app.post("/webhook", (req, res) => {
 
   const payload = req.body as PRWebhookPayload;
   const { action, number: prNumber } = payload;
+  const installationId = payload.installation?.id;
 
   if (!Number.isInteger(prNumber) || prNumber < 1 || prNumber > 60000) {
     res.status(400).json({ error: "Invalid PR number" });
@@ -185,7 +248,7 @@ app.post("/webhook", (req, res) => {
   }
 
   const { owner: { login: owner }, name: repo, full_name: fullName } = payload.repository;
-  const opts = { owner, repo, prNumber };
+  const opts = { owner, repo, prNumber, installationId };
 
   if (action === "opened" || action === "synchronize" || action === "reopened") {
     res.status(202).json({ message: "Build queued" });
@@ -197,7 +260,7 @@ app.post("/webhook", (req, res) => {
       await commentBuilding(opts);
 
       const sha = payload.pull_request.head.sha;
-      const checkRunId = await startBuildCheckRun({ owner, repo, sha });
+      const checkRunId = await startBuildCheckRun({ owner, repo, sha, installationId });
 
       const result = await buildPreview({
         owner,
@@ -211,7 +274,7 @@ app.post("/webhook", (req, res) => {
         log.error("Build failed", { prNumber, error: result.errorLog });
         recordBuildFailure(result.buildTime * 1000);
         await commentFailed(opts, result.errorLog ?? "Unknown error");
-        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error" });
+        if (checkRunId) await failBuildCheckRun({ owner, repo, checkRunId, errorLog: result.errorLog ?? "Unknown error", installationId });
         await destroyPreview(prNumber);
         return;
       }
@@ -234,7 +297,7 @@ app.post("/webhook", (req, res) => {
       const audit = await runAudits({ previewUrl: url, prNumber, productionUrl: config.productionUrl });
 
       await commentLive(opts, { buildTime: result.buildTime, healthStatus, audit });
-      await runCheckRuns({ owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit });
+      await runCheckRuns({ owner, repo, sha, prNumber, checkRunId: checkRunId ?? undefined, audit, installationId });
     });
 
     return;

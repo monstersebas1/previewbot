@@ -12,8 +12,20 @@ function optional(key: string, fallback: string): string {
   return process.env[key] ?? fallback;
 }
 
+const githubToken = process.env.GITHUB_TOKEN ?? "";
+const githubAppId = process.env.GITHUB_APP_ID ?? "";
+const githubAppPrivateKey = process.env.GITHUB_APP_PRIVATE_KEY ?? "";
+
+if (!githubToken && !(githubAppId && githubAppPrivateKey)) {
+  throw new Error(
+    "Auth required: set GITHUB_TOKEN for PAT mode, or both GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY for GitHub App mode",
+  );
+}
+
 export const config = {
-  githubToken: required("GITHUB_TOKEN"),
+  githubToken,
+  githubAppId,
+  githubAppPrivateKey,
   webhookSecret: required("GITHUB_WEBHOOK_SECRET"),
   previewDomain: (() => {
     const domain = required("PREVIEW_DOMAIN");
@@ -48,6 +60,7 @@ export const config = {
   reportDir: optional("REPORT_DIR", "/var/previewbot/reports"),
   sslCertPath: optional("SSL_CERT_PATH", "/etc/letsencrypt/live/preview.weautomatehq.cloud/fullchain.pem"),
   sslKeyPath: optional("SSL_KEY_PATH", "/etc/letsencrypt/live/preview.weautomatehq.cloud/privkey.pem"),
+  dbPath: optional("DB_PATH", "/var/previewbot/installations.db"),
 };
 
 export function previewPort(prNumber: number): number {

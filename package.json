@@ -13,7 +13,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@axe-core/puppeteer": "^4.11.2",
+    "@octokit/auth-app": "^8.2.0",
     "@octokit/rest": "^21.1.1",
+    "better-sqlite3": "^12.9.0",
     "chrome-launcher": "^1.2.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
@@ -25,6 +27,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.2",
     "@types/node": "^22.19.17",
     "tsx": "^4.19.4",

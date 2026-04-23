@@ -1,10 +1,20 @@
 import crypto from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import { config, previewUrl } from "./config.js";
+import { isAppMode, getInstallationOctokit } from "./app-auth.js";
 import type { AuditReport } from "./audit-types.js";
 import { generateAuditReport } from "./audit-report.js";
 
-export const octokit: InstanceType<typeof Octokit> = new Octokit({ auth: config.githubToken });
+const patOctokit: InstanceType<typeof Octokit> = config.githubToken
+  ? new Octokit({ auth: config.githubToken })
+  : new Octokit();
+
+export function getOctokit(installationId?: number | null): InstanceType<typeof Octokit> {
+  if (installationId && isAppMode()) {
+    return getInstallationOctokit(installationId);
+  }
+  return patOctokit;
+}
 
 const MARKER = "<!-- previewbot -->";
 
@@ -24,18 +34,20 @@ export function verifySignature(payload: string, signature: string): boolean {
   return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
-interface CommentOptions {
+export interface CommentOptions {
   owner: string;
   repo: string;
   prNumber: number;
+  installationId?: number;
 }
 
-async function findBotComment({ owner, repo, prNumber }: CommentOptions): Promise<number | null> {
+async function findBotComment(opts: CommentOptions): Promise<number | null> {
+  const oc = getOctokit(opts.installationId);
   for (let page = 1; ; page++) {
-    const { data } = await octokit.rest.issues.listComments({
-      owner,
-      repo,
-      issue_number: prNumber,
+    const { data } = await oc.rest.issues.listComments({
+      owner: opts.owner,
+      repo: opts.repo,
+      issue_number: opts.prNumber,
       per_page: 100,
       page,
     });
@@ -46,22 +58,23 @@ async function findBotComment({ owner, repo, prNumber }: CommentOptions): Promis
   }
 }
 
-async function upsertComment({ owner, repo, prNumber }: CommentOptions, body: string): Promise<void> {
+async function upsertComment(opts: CommentOptions, body: string): Promise<void> {
+  const oc = getOctokit(opts.installationId);
   const markedBody = `${MARKER}\n${body}`;
-  const commentId = await findBotComment({ owner, repo, prNumber });
+  const commentId = await findBotComment(opts);
 
   if (commentId) {
-    await octokit.rest.issues.updateComment({
-      owner,
-      repo,
+    await oc.rest.issues.updateComment({
+      owner: opts.owner,
+      repo: opts.repo,
       comment_id: commentId,
       body: markedBody,
     });
   } else {
-    await octokit.rest.issues.createComment({
-      owner,
-      repo,
-      issue_number: prNumber,
+    await oc.rest.issues.createComment({
+      owner: opts.owner,
+      repo: opts.repo,
+      issue_number: opts.prNumber,
       body: markedBody,
     });
   }
@@ -110,10 +123,7 @@ export async function commentLive(
   await upsertComment(opts, lines.join("\n"));
 }
 
-export async function commentFailed(
-  opts: CommentOptions,
-  errorLog: string,
-): Promise<void> {
+export async function commentFailed(opts: CommentOptions, errorLog: string): Promise<void> {
   await upsertComment(opts, [
     "## PreviewBot",
     "",
@@ -153,8 +163,10 @@ export async function getPRState(
   owner: string,
   repo: string,
   prNumber: number,
+  installationId?: number,
 ): Promise<string> {
-  const { data } = await octokit.rest.pulls.get({
+  const oc = getOctokit(installationId);
+  const { data } = await oc.rest.pulls.get({
     owner,
     repo,
     pull_number: prNumber,

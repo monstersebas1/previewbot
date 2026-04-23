@@ -1,6 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { getPRState } from "./github.js";
+import { getInstallationForRepo } from "./installation-db.js";
 import { destroyPreview } from "./builder.js";
 import { removeRoute } from "./nginx.js";
 import { log } from "./logger.js";
@@ -51,7 +52,8 @@ export async function cleanupStalePreviews(): Promise<string[]> {
     } else if (preview.repo) {
       try {
         const [owner, repo] = preview.repo.split("/");
-        const state = await getPRState(owner, repo, preview.prNumber);
+        const installationId = getInstallationForRepo(owner, repo) ?? undefined;
+        const state = await getPRState(owner, repo, preview.prNumber, installationId);
         if (state === "closed") {
           shouldClean = true;
         }

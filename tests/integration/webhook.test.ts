@@ -37,6 +37,16 @@ vi.mock("../../src/cleanup.js", () => ({
   cleanupStalePreviews: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../../src/installation-db.js", () => ({
+  saveInstallation: vi.fn(),
+  deleteInstallation: vi.fn(),
+  addRepos: vi.fn(),
+  removeRepos: vi.fn(),
+  getInstallationForRepo: vi.fn().mockReturnValue(null),
+  listReposForInstallation: vi.fn().mockReturnValue([]),
+  closeDb: vi.fn(),
+}));
+
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "test-secret-for-integration";
 
 function sign(payload: string): string {
@@ -191,5 +201,101 @@ describe("Webhook Handler Integration", () => {
     expect(res.status).toBe(202);
     const data = await res.json();
     expect(data.message).toBe("Cleanup queued");
+  });
+
+  it("handles installation created event", async () => {
+    const { saveInstallation } = await import("../../src/installation-db.js");
+    const payload = {
+      action: "created",
+      installation: { id: 123, account: { login: "acme", type: "Organization" } },
+      repositories: [{ full_name: "acme/web" }, { full_name: "acme/api" }],
+    };
+    const body = JSON.stringify(payload);
+    const res = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sign(body),
+        "X-GitHub-Event": "installation",
+        "X-GitHub-Delivery": "delivery-install-created",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.message).toBe("Installation created");
+    expect(saveInstallation).toHaveBeenCalledWith(123, "acme", "Organization", [
+      { owner: "acme", repo: "web" },
+      { owner: "acme", repo: "api" },
+    ]);
+  });
+
+  it("handles installation deleted event", async () => {
+    const { deleteInstallation } = await import("../../src/installation-db.js");
+    const payload = {
+      action: "deleted",
+      installation: { id: 456, account: { login: "acme", type: "Organization" } },
+    };
+    const body = JSON.stringify(payload);
+    const res = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sign(body),
+        "X-GitHub-Event": "installation",
+        "X-GitHub-Delivery": "delivery-install-deleted",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(deleteInstallation).toHaveBeenCalledWith(456);
+  });
+
+  it("handles installation_repositories added event", async () => {
+    const { addRepos } = await import("../../src/installation-db.js");
+    const payload = {
+      action: "added",
+      installation: { id: 789 },
+      repositories_added: [{ full_name: "acme/new-repo" }],
+    };
+    const body = JSON.stringify(payload);
+    const res = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sign(body),
+        "X-GitHub-Event": "installation_repositories",
+        "X-GitHub-Delivery": "delivery-repos-added",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(addRepos).toHaveBeenCalledWith(789, [{ owner: "acme", repo: "new-repo" }]);
+  });
+
+  it("handles installation_repositories removed event", async () => {
+    const { removeRepos } = await import("../../src/installation-db.js");
+    const payload = {
+      action: "removed",
+      installation: { id: 789 },
+      repositories_removed: [{ full_name: "acme/old-repo" }],
+    };
+    const body = JSON.stringify(payload);
+    const res = await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sign(body),
+        "X-GitHub-Event": "installation_repositories",
+        "X-GitHub-Delivery": "delivery-repos-removed",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(removeRepos).toHaveBeenCalledWith(789, [{ owner: "acme", repo: "old-repo" }]);
   });
 });

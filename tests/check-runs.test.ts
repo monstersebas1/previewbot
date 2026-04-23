@@ -13,16 +13,13 @@ const mockConfig = vi.hoisted(() => ({
   thresholdVisualCritical: 0,
 }));
 
-// Mock github.ts to avoid needing GITHUB_TOKEN
+const mockChecks = vi.hoisted(() => ({
+  create: vi.fn(),
+  update: vi.fn(),
+}));
+
 vi.mock("../src/github.js", () => ({
-  octokit: {
-    rest: {
-      checks: {
-        create: vi.fn(),
-        update: vi.fn(),
-      },
-    },
-  },
+  getOctokit: vi.fn().mockReturnValue({ rest: { checks: mockChecks } }),
 }));
 
 vi.mock("../src/config.js", () => ({
@@ -30,7 +27,6 @@ vi.mock("../src/config.js", () => ({
 }));
 
 import { evaluateAudit, startBuildCheckRun, runCheckRuns } from "../src/check-runs.js";
-import { octokit } from "../src/github.js";
 
 function makeReport(overrides: Partial<AuditReport> = {}): AuditReport {
   return {
@@ -268,11 +264,6 @@ describe("evaluateAudit", () => {
     expect(result.title).toContain("Performance");
   });
 });
-
-const mockChecks = octokit.rest.checks as {
-  create: ReturnType<typeof vi.fn>;
-  update: ReturnType<typeof vi.fn>;
-};
 
 describe("startBuildCheckRun", () => {
   beforeEach(() => {
