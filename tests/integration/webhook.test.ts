@@ -276,6 +276,29 @@ describe("Webhook Handler Integration", () => {
     expect(addRepos).toHaveBeenCalledWith(789, [{ owner: "acme", repo: "new-repo" }]);
   });
 
+  it("threads installationId from PR webhook into commentBuilding", async () => {
+    const { commentBuilding } = await import("../../src/github.js");
+    const body = JSON.stringify({
+      ...makePayload({ action: "opened", number: 55 }),
+      installation: { id: 777 },
+    });
+    await fetch(`${baseUrl}/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sign(body),
+        "X-GitHub-Event": "pull_request",
+        "X-GitHub-Delivery": "delivery-with-installation",
+      },
+      body,
+    });
+    // Allow async build queue to process
+    await new Promise((r) => setTimeout(r, 50));
+    expect(commentBuilding).toHaveBeenCalledWith(
+      expect.objectContaining({ installationId: 777 }),
+    );
+  });
+
   it("handles installation_repositories removed event", async () => {
     const { removeRepos } = await import("../../src/installation-db.js");
     const payload = {
